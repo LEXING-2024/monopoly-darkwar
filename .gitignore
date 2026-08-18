@@ -1,0 +1,50 @@
+# ===== 依赖 =====
+node_modules/
+
+# ===== 构建产物 =====
+dist/
+# Capacitor 同步的 Web 资源副本（由 `npx cap sync android` 重新生成）
+android/app/src/main/assets/public/
+
+# ===== Android / Gradle =====
+# 本机 SDK 路径（每台机器不同，勿提交）
+android/local.properties
+# Gradle 缓存与构建输出
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/
+android/captures/
+android/.idea/
+*.apk
+*.aab
+
+# ===== 本地打包环境（JDK / Android SDK / Gradle 缓存 / 日志 / APK 产物）=====
+apk/
+
+# ===== 日志 =====
+*.log
+npm-debug.log*
+
+# ===== 编辑器 / 系统 =====
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ===== Claude Code 本地设置（个人权限白名单，勿提交）=====
+.claude/settings.local.json
+
+# ===== 测试产物 =====
+.playwright-mcp/
+
+# ===== 开发期检查截图 =====
+32-hd-cross.png
+ingame-check.jpg
+ingame-check.png
+
+# ===== 内部文档（设计机密，不随仓库上传）=====
+需求文档.md
+经济参数.md
+游戏截图/

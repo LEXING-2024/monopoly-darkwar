@@ -1,0 +1,337 @@
+/* ============ 全局主题：羊皮纸 / 做旧木质 / 暗金 ============ */
+
+/* 按钮磨损变体（每套的污渍斑与划痕位置、走向都不同） */
+:root {
+  --wear-1: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='120'%3E%3Cfilter id='b' x='-60%25' y='-60%25' width='220%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='5'/%3E%3C/filter%3E%3Cg filter='url(%23b)' fill='rgba(70,35,8,0.22)'%3E%3Cellipse cx='172' cy='28' rx='18' ry='11'/%3E%3Cellipse cx='38' cy='72' rx='9' ry='7'/%3E%3C/g%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M26,20 L58,26' stroke='rgba(255,240,200,0.35)' stroke-width='1.6'/%3E%3Cpath d='M150,62 L182,56' stroke='rgba(255,240,200,0.3)' stroke-width='1.4'/%3E%3Cpath d='M66,94 L100,88' stroke='rgba(255,240,200,0.28)' stroke-width='1.3'/%3E%3Cpath d='M118,30 L134,34' stroke='rgba(60,30,5,0.2)' stroke-width='1.2'/%3E%3C/g%3E%3C/svg%3E");
+  --wear-2: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='120'%3E%3Cfilter id='b' x='-60%25' y='-60%25' width='220%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='5'/%3E%3C/filter%3E%3Cg filter='url(%23b)' fill='rgba(70,35,8,0.22)'%3E%3Cellipse cx='56' cy='22' rx='14' ry='9'/%3E%3Cellipse cx='184' cy='86' rx='10' ry='8'/%3E%3C/g%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M40,34 L66,28' stroke='rgba(255,240,200,0.3)' stroke-width='1.4'/%3E%3Cpath d='M108,84 L140,92' stroke='rgba(255,240,200,0.28)' stroke-width='1.3'/%3E%3Cpath d='M170,30 L188,38' stroke='rgba(255,240,200,0.22)' stroke-width='1.1'/%3E%3Cpath d='M90,52 L102,56' stroke='rgba(60,30,5,0.2)' stroke-width='1.2'/%3E%3C/g%3E%3C/svg%3E");
+  --wear-3: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='120'%3E%3Cfilter id='b' x='-60%25' y='-60%25' width='220%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='5'/%3E%3C/filter%3E%3Cg filter='url(%23b)' fill='rgba(70,35,8,0.22)'%3E%3Cellipse cx='20' cy='36' rx='12' ry='8'/%3E%3Cellipse cx='150' cy='96' rx='16' ry='10'/%3E%3C/g%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M60,58 L92,64' stroke='rgba(255,240,200,0.3)' stroke-width='1.5'/%3E%3Cpath d='M136,24 L162,30' stroke='rgba(255,240,200,0.28)' stroke-width='1.3'/%3E%3Cpath d='M100,14 L118,18' stroke='rgba(255,240,200,0.25)' stroke-width='1.2'/%3E%3Cpath d='M172,70 L184,74' stroke='rgba(60,30,5,0.2)' stroke-width='1.2'/%3E%3C/g%3E%3C/svg%3E");
+  --wear-4: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='120'%3E%3Cfilter id='b' x='-60%25' y='-60%25' width='220%25' height='220%25'%3E%3CfeGaussianBlur stdDeviation='5'/%3E%3C/filter%3E%3Cg filter='url(%23b)' fill='rgba(70,35,8,0.22)'%3E%3Cellipse cx='188' cy='20' rx='13' ry='8'/%3E%3Cellipse cx='30' cy='92' rx='15' ry='9'/%3E%3C/g%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M30,50 L56,44' stroke='rgba(255,240,200,0.32)' stroke-width='1.5'/%3E%3Cpath d='M120,70 L148,64' stroke='rgba(255,240,200,0.27)' stroke-width='1.4'/%3E%3Cpath d='M168,84 L192,92' stroke='rgba(255,240,200,0.22)' stroke-width='1.2'/%3E%3Cpath d='M78,20 L88,24' stroke='rgba(60,30,5,0.2)' stroke-width='1.2'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+/* 页面背景：烛光下的实木桌面（木纹 + 板缝 + 污渍 + 暗角） */
+body {
+  font-family: 'KaiTi', 'STKaiti', 'FangSong', 'SimSun', Georgia, 'Times New Roman', serif;
+  background-image:
+    /* 四角暗角 */
+    radial-gradient(ellipse 92% 72% at 50% 44%, transparent 52%, rgba(0, 0, 0, 0.62) 100%),
+    /* 烛光 */
+    radial-gradient(ellipse 60% 46% at 50% 34%, rgba(255, 198, 120, 0.14), transparent 68%),
+    /* 木纹年轮细丝 */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.011 0.17' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.32' intercept='0.04'/%3E%3CfeFuncG type='linear' slope='0.32' intercept='0.04'/%3E%3CfeFuncB type='linear' slope='0.32' intercept='0.04'/%3E%3CfeFuncA type='linear' slope='0.17'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='420' height='420' filter='url(%23w)'/%3E%3C/svg%3E"),
+    /* 木板明暗交替 */
+    repeating-linear-gradient(0deg, rgba(255, 235, 190, 0.045) 0 2px, transparent 2px 90px),
+    /* 板缝高光 */
+    repeating-linear-gradient(0deg, transparent 0 88px, rgba(255, 224, 168, 0.12) 88px 90px),
+    /* 板缝深线 */
+    repeating-linear-gradient(0deg, transparent 0 90px, rgba(18, 7, 0, 0.6) 90px 93px),
+    /* 竖直拼接缝 */
+    repeating-linear-gradient(90deg, transparent 0 138px, rgba(18, 7, 0, 0.42) 138px 140px),
+    /* 岁月污渍 */
+    radial-gradient(ellipse 440px 170px at 10% 90%, rgba(18, 7, 0, 0.5), transparent 70%),
+    radial-gradient(ellipse 400px 150px at 90% 8%, rgba(18, 7, 0, 0.42), transparent 70%),
+    /* 桌面底色 */
+    linear-gradient(180deg, #4a2e16 0%, #3a2310 46%, #2a180a 100%);
+  color: #3a2612;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  gap: 10px;
+  padding: 10px;
+}
+
+.board {
+  flex: 0 0 70%;
+  min-width: 0;
+  display: flex;
+}
+
+/* 右侧信息栏：木托盘（板缝 + 木纹 + 划痕） */
+.panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 230px;
+  max-width: 480px;
+  overflow: hidden;   /* 上部内容滚动、日志固定底部，避免日志卡片被挤出裁切 */
+  padding: 8px;
+  border-radius: 16px;
+  background-image:
+    /* 木纹年轮细丝 */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.011 0.17' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.32' intercept='0.04'/%3E%3CfeFuncG type='linear' slope='0.32' intercept='0.04'/%3E%3CfeFuncB type='linear' slope='0.32' intercept='0.04'/%3E%3CfeFuncA type='linear' slope='0.17'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='420' height='420' filter='url(%23w)'/%3E%3C/svg%3E"),
+    /* 板缝深线 */
+    repeating-linear-gradient(0deg,
+      transparent 0 90px, rgba(18, 7, 0, 0.5) 90px 92px),
+    /* 木板底色 */
+    linear-gradient(180deg, #54371b 0%, #432a13 50%, #33200e 100%);
+  box-shadow:
+    inset 0 0 26px rgba(0, 0, 0, 0.5),
+    inset 0 0 8px rgba(0, 0, 0, 0.4),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+}
+/* 上部（玩家/行情/操作）内容过多时内部滚动，行动日志固定底部完整显示 */
+.panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 6px 4px 4px;   /* 滚动时内容不贴面板圆弧边角，保持圆角观感 */
+  border-radius: 12px;
+}
+.panel > .panel-scroll + .paper.card {
+  flex: none;
+}
+/* 面板内羊皮纸卡片的圆角与木托盘圆弧统一 */
+.panel .paper.card {
+  border-radius: 13px;
+}
+/* 复古细滚动条（圆头），滚动时边角依然圆润 */
+.panel-scroll::-webkit-scrollbar { width: 8px; }
+.panel-scroll::-webkit-scrollbar-thumb {
+  background: rgba(122, 82, 30, 0.5);
+  border-radius: 6px;
+  border: 2px solid rgba(255, 244, 210, 0.25);
+}
+.panel-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 244, 210, 0.12);
+  border-radius: 6px;
+}
+
+/* ---------- 羊皮纸卡片（米花纸纹 + 污渍线条 + 磨损 + 边缘老化） ---------- */
+.paper {
+  background-image:
+    /* 污渍线条 */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='300'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.11' numOctaves='4' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncA type='linear' slope='0.11'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='500' height='300' filter='url(%23s)'/%3E%3C/svg%3E"),
+    /* 米花纸纹 */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncG type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncB type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncA type='linear' slope='0.11'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23m)'/%3E%3C/svg%3E"),
+    /* 磨损亮斑 */
+    radial-gradient(ellipse 130px 76px at 8% 30%, rgba(255, 250, 232, 0.26), transparent 70%),
+    radial-gradient(ellipse 150px 90px at 90% 62%, rgba(255, 248, 226, 0.2), transparent 70%),
+    /* 岁月污渍 */
+    radial-gradient(ellipse 140px 100px at 12% 80%, rgba(146, 96, 34, 0.14), transparent 72%),
+    radial-gradient(ellipse 170px 120px at 88% 12%, rgba(116, 72, 18, 0.12), transparent 72%),
+    /* 边缘老化 */
+    radial-gradient(ellipse 80% 70% at 50% 48%, transparent 58%, rgba(122, 82, 30, 0.28) 100%),
+    /* 泛黄底色 */
+    linear-gradient(168deg, #f4e5ba 0%, #eed8a4 42%, #e6ca8e 100%);
+  border: 1.5px solid #8a6534;
+  border-radius: 10px;
+  box-shadow:
+    inset 0 0 34px rgba(94, 58, 14, 0.3),
+    inset 0 0 10px rgba(94, 58, 14, 0.24),
+    0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+/* ---------- 羊皮纸表单控件（弹窗/面板内统一风格：米花纸纹 + 污渍 + 内凹） ---------- */
+.paper-input,
+.paper-select,
+.paper-check {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1.5px solid #8a6534;
+  background-image:
+    radial-gradient(ellipse 44px 26px at 86% 22%, rgba(255, 250, 232, 0.45), transparent 70%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' seed='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncA type='linear' slope='0.13'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23m)'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, #faf0d0, #eedcaa);
+  box-shadow:
+    inset 0 2px 5px rgba(110, 70, 20, 0.32),
+    inset 0 -1px 2px rgba(255, 250, 230, 0.55),
+    inset 3px 0 4px rgba(110, 70, 20, 0.12),
+    0 1px 0 rgba(255, 244, 210, 0.4);
+  font-size: 14px;
+  color: #4a2e10;
+  font-family: inherit;
+}
+.paper-input:focus, .paper-select:focus { outline: 2px solid rgba(190, 140, 60, 0.6); filter: brightness(1.04); }
+.paper-select { cursor: pointer; }
+/* 复古复选框：羊皮纸小方盒 + 墨色对勾 */
+.paper-check {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px; height: 18px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; flex: none;
+}
+.paper-check:checked::after {
+  content: '✓';
+  color: #4a3018; font-weight: bold; font-size: 14px; line-height: 1;
+  text-shadow: 0 0 2px rgba(74, 48, 24, 0.35);
+}
+
+/* ---------- 按钮：做旧木块（木纹 + 木节 + 划痕 + 污渍，统一圆角） ---------- */
+.btn {
+  display: inline-block;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #f2e2bc;
+  text-shadow: 0 1px 2px rgba(30, 15, 0, 0.6);
+  border: 1.5px solid #46300e;
+  border-radius: 10px;
+  cursor: pointer;
+  background-image:
+    /* 木节（暗色结疤+高光） */
+    radial-gradient(ellipse 10px 8px at 84% 70%, rgba(55, 26, 4, 0.55), transparent 75%),
+    radial-gradient(ellipse 5px 4px at 84% 70%, rgba(255, 232, 180, 0.28), transparent 75%),
+    /* 磨损高光 */
+    radial-gradient(ellipse 60% 42% at 22% 6%, rgba(255, 236, 190, 0.34), transparent 72%),
+    /* 木纹 */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015 0.26' numOctaves='3' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncG type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncB type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncA type='linear' slope='0.3'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='120' filter='url(%23w)'/%3E%3C/svg%3E"),
+    /* 独有磨损（污渍斑+划痕，各按钮略有不同） */
+    var(--wear, var(--wear-1)),
+    /* 板缝 */
+    linear-gradient(180deg, transparent 0 56%, rgba(28, 12, 0, 0.4) 56% 59%, transparent 59%),
+    /* 木底色 */
+    linear-gradient(180deg, #ac8046 0%, #8a6330 55%, #6f4c20 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 232, 180, 0.5),
+    inset 0 -2px 4px rgba(40, 20, 0, 0.5),
+    inset 2px 0 3px rgba(255, 232, 180, 0.14),
+    inset -2px 0 4px rgba(40, 20, 0, 0.28),
+    0 2px 0 #37230a,
+    0 4px 7px rgba(0, 0, 0, 0.35);
+  transition: transform 0.08s, box-shadow 0.08s, filter 0.12s;
+  user-select: none;
+}
+/* 每个按钮的污渍、划痕略有不同 */
+.btn:nth-child(4n+2) { --wear: var(--wear-2); }
+.btn:nth-child(4n+3) { --wear: var(--wear-3); }
+.btn:nth-child(4n) { --wear: var(--wear-4); }
+.btn:hover {
+  filter: brightness(1.1);
+}
+.btn:active {
+  transform: translateY(2px);
+  box-shadow:
+    inset 0 2px 6px rgba(60, 30, 5, 0.55),
+    inset 0 -1px 2px rgba(255, 236, 190, 0.3),
+    0 1px 0 #37230a,
+    0 2px 4px rgba(0, 0, 0, 0.3);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn.primary {
+  color: #fff3d0;
+  border-color: #46300e;
+  background-image:
+    radial-gradient(ellipse 10px 8px at 84% 70%, rgba(55, 26, 4, 0.5), transparent 75%),
+    radial-gradient(ellipse 60% 42% at 22% 6%, rgba(255, 244, 200, 0.42), transparent 72%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015 0.26' numOctaves='3' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncG type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncB type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncA type='linear' slope='0.3'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='120' filter='url(%23w)'/%3E%3C/svg%3E"),
+    var(--wear, var(--wear-1)),
+    linear-gradient(180deg, transparent 0 56%, rgba(28, 12, 0, 0.4) 56% 59%, transparent 59%),
+    linear-gradient(180deg, #d9a63c 0%, #a5711f 60%, #7d5210 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 232, 180, 0.5),
+    inset 0 -2px 4px rgba(40, 20, 0, 0.5),
+    0 2px 0 #46300e,
+    0 4px 7px rgba(0, 0, 0, 0.38);
+  font-weight: bold;
+}
+.btn.danger,
+.btn.danger-btn {
+  color: #ffe9dc;
+  border-color: #3f150a;
+  background-image:
+    radial-gradient(ellipse 10px 8px at 84% 70%, rgba(30, 8, 2, 0.6), transparent 75%),
+    radial-gradient(ellipse 60% 42% at 22% 6%, rgba(255, 216, 190, 0.28), transparent 72%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015 0.26' numOctaves='3' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncG type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncB type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncA type='linear' slope='0.3'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='120' filter='url(%23w)'/%3E%3C/svg%3E"),
+    var(--wear, var(--wear-1)),
+    linear-gradient(180deg, transparent 0 56%, rgba(20, 6, 0, 0.45) 56% 59%, transparent 59%),
+    linear-gradient(180deg, #b05535 0%, #8a3a24 55%, #6b2a18 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 216, 190, 0.4),
+    inset 0 -2px 4px rgba(30, 8, 2, 0.55),
+    0 2px 0 #2e0f06,
+    0 4px 7px rgba(0, 0, 0, 0.38);
+}
+.btn.small {
+  padding: 4px 10px;
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+.btn.tiny {
+  padding: 2px 7px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+.btn.big {
+  padding: 13px 20px;
+  font-size: 17px;
+}
+.btn.active {
+  color: #fff3d0;
+  background-image:
+    radial-gradient(ellipse 10px 8px at 84% 70%, rgba(55, 26, 4, 0.5), transparent 75%),
+    radial-gradient(ellipse 60% 42% at 22% 6%, rgba(255, 244, 200, 0.4), transparent 72%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015 0.26' numOctaves='3' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncG type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncB type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncA type='linear' slope='0.3'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='120' filter='url(%23w)'/%3E%3C/svg%3E"),
+    var(--wear, var(--wear-1)),
+    linear-gradient(180deg, #c9992f 0%, #96631a 60%, #75500f 100%);
+  box-shadow:
+    inset 0 2px 6px rgba(60, 35, 5, 0.6),
+    inset 0 -1px 2px rgba(255, 236, 190, 0.35),
+    0 1px 0 #46300e;
+  transform: translateY(2px);
+  font-weight: bold;
+}
+
+/* ---------- 滚动条 ---------- */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #8a6534;
+  border-radius: 8px;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+}
+
+/* ---------- 响应式（html.is-mobile 由 main.ts 设备检测标记：与 PC 一致的左右两栏，紧凑化） ---------- */
+html.is-mobile .main {
+  gap: 6px;
+  padding: 6px;
+}
+html.is-mobile .board {
+  flex: 0 0 70%;
+}
+html.is-mobile .panel {
+  min-width: 0;
+  max-width: none;
+  font-size: 12px;
+  gap: 6px;
+  padding: 6px;
+}
