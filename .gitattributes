@@ -1,0 +1,4 @@
+# 统一行尾：文本文件入库用 LF，检出按平台处理（消除 Windows CRLF 警告）
+* text=auto
+*.sh text eol=lf
+*.bat text eol=crlf
