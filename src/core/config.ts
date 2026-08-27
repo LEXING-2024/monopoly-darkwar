@@ -176,13 +176,15 @@ export const EAST_BRIDGE = 53
 export const BRIDGES = {
   [WEST_BRIDGE]: {
     name: '西桥', price: 1500, tolls: [0, 100, 300, 600],
-    upgradeCosts: [0, 1200, 2000], winterIce: true,
+    upgradeCosts: [0, 1200, 2000],
   },
   [EAST_BRIDGE]: {
     name: '东桥', price: 2000, tolls: [0, 200, 600, 1200],
-    upgradeCosts: [0, 1500, 2500], winterIce: false,
+    upgradeCosts: [0, 1500, 2500],
   },
 } as const
+/** 修桥费用折扣：修桥 = 该级升级成本 × 此系数（核心/AI/UI 共用同一口径，见 economy.bridgeRepairCost） */
+export const BRIDGE_REPAIR_DISCOUNT = 0.5
 
 // 河流沿岸地块（洪水影响，文档 7.3）
 export const FLOOD_TILES: number[] = [14, 15, 19, 20, 47, 48, 50, 51]

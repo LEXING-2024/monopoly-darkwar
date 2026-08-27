@@ -66,13 +66,20 @@ function openTrade(): void {
   tradeOpen.value = true
 }
 
+/** 数字输入防 NaN：v-model.number 对非法输入（如 "e"）返回原始字符串，
+ *  统一收敛为非负有限整数，非法收敛为 0 */
+function num(v: unknown): number {
+  const n = Math.floor(Number(v))
+  return Number.isFinite(n) && n >= 0 ? n : 0
+}
+
 /** 交易估值合计：现金 + 地块价格 + 资源市价 */
 function tradeValue(tiles: number[], res: Record<string, number>, cash: number): number {
   const st = s.value
-  if (!st) return cash
-  let v = cash
+  if (!st) return num(cash)
+  let v = num(cash)
   for (const i of tiles) v += st.tiles[i]?.price ?? 0
-  for (const r of RESOURCE_ORDER) v += Math.floor(res[r] ?? 0) * st.market[r]
+  for (const r of RESOURCE_ORDER) v += num(res[r]) * st.market[r]
   return Math.round(v)
 }
 const tradeSummary = computed(() => {
@@ -89,13 +96,13 @@ function toggle(arr: number[], v: number): void {
 
 async function submitTrade(): Promise<void> {
   const pick = (res: Record<string, number>, sel: Record<string, boolean>): Record<string, number> =>
-    Object.fromEntries(RESOURCE_ORDER.filter(r => sel[r]).map(r => [r, Math.floor(res[r] ?? 0)]))
+    Object.fromEntries(RESOURCE_ORDER.filter(r => sel[r]).map(r => [r, num(res[r])]))
   const give: TradeOffer = {
-    tiles: trade.myTiles, cash: Math.floor(trade.myCash),
+    tiles: trade.myTiles, cash: num(trade.myCash),
     resources: pick(trade.myRes, trade.myResPick),
   }
   const receive: TradeOffer = {
-    tiles: trade.theirTiles, cash: Math.floor(trade.theirCash),
+    tiles: trade.theirTiles, cash: num(trade.theirCash),
     resources: pick(trade.theirRes, trade.theirResPick),
   }
   await game.value?.proposeTrade(trade.target, give, receive)

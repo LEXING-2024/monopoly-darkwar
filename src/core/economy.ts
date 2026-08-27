@@ -1,7 +1,7 @@
 // ============ 经济计算：租金 / 资源产出（文档 4、8、9） ============
 
 import {
-  BRIDGES, BUILDING_DEFS, CLIMATE, CLIMATE_MODS, EAST_BRIDGE, EXPLORE_COST_RATIO, RENT_RAMP_MIN, RENT_RAMP_ROUNDS,
+  BRIDGES, BRIDGE_REPAIR_DISCOUNT, BUILDING_DEFS, CLIMATE, CLIMATE_MODS, EAST_BRIDGE, EXPLORE_COST_RATIO, RENT_RAMP_MIN, RENT_RAMP_ROUNDS,
   RESERVE_MULT, RESERVE_WEIGHTS, RESOURCES, SEASONS, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from './config'
 import { ownsTech } from './market'
@@ -58,6 +58,14 @@ export function bridgeToll(game: GameApi, tile: Tile): number {
   toll *= globalRentMod(game)
   if (game.state.climate === 'crisis') toll *= CLIMATE.crisisBridgeToll
   return Math.round(toll / 10) * 10
+}
+
+/** 修桥/升级费用：该级升级成本 × 折扣（核心 game.repairBridge、AI、UI 共用此唯一口径） */
+export function bridgeRepairCost(tile: Tile): number {
+  const cfg = BRIDGES[tile.index as typeof WEST_BRIDGE | typeof EAST_BRIDGE]
+  if (!cfg) return 0
+  const base = (cfg.upgradeCosts as readonly number[])[tile.bridgeLevel] ?? 0
+  return Math.round((base * BRIDGE_REPAIR_DISCOUNT) / 10) * 10
 }
 
 /** 地块当回合资源产出（未应用灾害，灾害由调用方按 tile.disaster 处理） */

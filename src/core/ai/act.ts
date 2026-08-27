@@ -3,11 +3,11 @@
 // 叠加 M3 修复：走 sellResources API、修桥半价、dam/breakwater/office 建造、威胁排序举报、评分选勘探/升级目标
 
 import {
-  BRIDGES, BUILDINGS, BUILDING_DEFS, EAST_BRIDGE, FLOOD_TILES, RESOURCES, RESOURCE_ORDER,
+  BUILDINGS, BUILDING_DEFS, EAST_BRIDGE, FLOOD_TILES, RESOURCES, RESOURCE_ORDER,
   SEASONS, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from '../config'
 import { canBuild, levelCost, repair, repairCost } from '../buildings'
-import { exploreCost, tileRent } from '../economy'
+import { bridgeRepairCost, exploreCost, tileRent } from '../economy'
 import { isMonopoly, lobby, monopolyInfo, monopolyTargets, reportMonopoly } from '../events'
 import { recordSale } from '../market'
 import { getBrain, decayBrain, incomeEstimate, terrainDependence } from './brain'
@@ -149,9 +149,7 @@ export async function aiAct(game: GameApi, playerId: number): Promise<void> {
   for (const idx of [WEST_BRIDGE, EAST_BRIDGE]) {
     const b = s.tiles[idx]
     if (b.owner !== playerId || b.bridgeLevel >= 3) continue
-    const cfg = BRIDGES[idx as typeof WEST_BRIDGE | typeof EAST_BRIDGE]
-    const costs = [...cfg.upgradeCosts] as number[]
-    const cost = Math.round(((costs[b.bridgeLevel] ?? 0) * 0.5) / 10) * 10
+    const cost = bridgeRepairCost(b)
     if (p.cash > Math.max(2500, cost * 1.5) && s.ops.bridge > 0 && chance(game, brain, 0.5)) {
       await game.sleep()
       game.repairBridge(idx)

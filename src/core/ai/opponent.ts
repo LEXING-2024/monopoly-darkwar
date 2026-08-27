@@ -1,11 +1,9 @@
 // ============ 对手建模与威胁评估：现金 / 地块分布 / 意图推断 / 威胁值 ============
 
-import { BRIDGES, EAST_BRIDGE, WEST_BRIDGE } from '../config'
 import { bridgeToll, tileRent, totalValue } from '../economy'
-import type { AiBrain, GameApi, OpponentModel, Terrain } from '../types'
+import type { AiBrain, GameApi, Terrain } from '../types'
 import { grudge, incomeEstimate, monopolyRushInfo } from './brain'
 import { betrayalCount, reportCount } from './memory'
-import { gamePhase, rankOf } from './strategy'
 
 /** 每回合刷新对手模型快照（公开信息 + 推断） */
 export function updateOpponentModels(game: GameApi, playerId: number): void {
@@ -56,23 +54,4 @@ export function updateOpponentModels(game: GameApi, playerId: number): void {
     v += grudge(brain, other.id) * 500
     m.threat = Math.round(v)
   }
-}
-
-/** 威胁排序后的对手列表（最危险在前） */
-export function threatsSorted(game: GameApi, playerId: number): number[] {
-  const brain = game.state.aiBrains?.[playerId]
-  if (!brain) return []
-  return [...brain.models]
-    .filter(m => m.threat > 0)
-    .sort((a, b) => b.threat - a.threat)
-    .map(m => m.id)
-}
-
-/** 最弱的对手（可乘虚而入：交易压价、困境背叛等） */
-export function weakestOpponent(game: GameApi, playerId: number): number | null {
-  const brain = game.state.aiBrains?.[playerId]
-  if (!brain) return null
-  const alive = brain.models.filter(m => game.state.players[m.id]?.alive && m.threat > 0)
-  if (!alive.length) return null
-  return [...alive].sort((a, b) => a.totalValueEst - b.totalValueEst)[0].id
 }

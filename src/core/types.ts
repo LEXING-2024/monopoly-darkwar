@@ -59,7 +59,6 @@ export interface PlayerStatus {
   outputMods: OutputMod[]     // 资源产出修正
   rentBonus: OutputMod[]      // 收取租金加成
   bridgeShare: { bridge: number; turns: number }[]  // 桥梁过路费分成
-  rested: boolean
 }
 
 export interface Player {

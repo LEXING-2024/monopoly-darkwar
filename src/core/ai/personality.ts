@@ -54,8 +54,3 @@ export function rollAction<T>(
   return noisy[0].value
 }
 
-/** 情绪高涨时的「非理性冲动」：以情绪驱动的概率触发（供报复/乱来行为使用） */
-export function irrationalPulse(brain: AiBrain): number {
-  // 情绪 > 0.5 时逐步增强的冲动强度（0~1）
-  return Math.max(0, (brain.emotion - 0.5) * 2)
-}

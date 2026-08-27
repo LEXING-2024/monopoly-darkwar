@@ -11,7 +11,7 @@ import { RNG } from './rng'
 import { createTiles } from './map'
 import { updateMarket, sellUnitPrice, settleMarketPressure } from './market'
 import {
-  bridgeToll, collectOutput, gdpValue, tileRent, totalValue,
+  bridgeRepairCost, bridgeToll, collectOutput, gdpValue, tileRent, totalValue,
 } from './economy'
 import { updateDisasters } from './disasters'
 import {
@@ -381,15 +381,14 @@ export class Game implements GameApi {
     return true
   }
 
-  /** 修桥（桥主） */
+  /** 修桥（桥主）：费用统一走 economy.bridgeRepairCost（升级成本半价） */
   repairBridge(tileIndex: number): boolean {
     const s = this.state
     const p = s.players[s.currentPlayer]
     const tile = s.tiles[tileIndex]
     if (tile.type !== 'bridge' || tile.owner !== p.id || tile.bridgeLevel >= 3) return false
     if (s.ops.bridge <= 0) return false
-    const costs = tileIndex === WEST_BRIDGE ? [0, 1200, 2000] : [0, 1500, 2500]
-    const cost = Math.round((costs[tile.bridgeLevel] * 0.5) / 10) * 10
+    const cost = bridgeRepairCost(tile)
     if (p.cash < cost) return false
     p.cash -= cost
     p.stats.spent += cost
@@ -809,7 +808,7 @@ export class Game implements GameApi {
       status: {
         moveMod: 0, rentFree: 0, insuredTurns: 0, floodImmune: 0,
         antitrustMod: 0, antitrustTurns: 0, reportCooldown: 0,
-        outputMods: [], rentBonus: [], bridgeShare: [], rested: false,
+        outputMods: [], rentBonus: [], bridgeShare: [],
       },
       traits: {
         aggression: 0.3 + this.rng.float(0, 0.7),
@@ -875,7 +874,7 @@ export class Game implements GameApi {
     // 市场波动
     updateMarket(this)
 
-    if (!p.alive) return
+    if (!p.alive || this.stopped) return
 
     // 转盘
     s.wheelResult = this.rollDie()
@@ -885,7 +884,7 @@ export class Game implements GameApi {
     } else {
       await this.sleep()
     }
-    if (!p.alive) return
+    if (!p.alive || this.stopped) return
 
     // 赌场下注结算
     if (s.casinoBet && s.casinoBet.player === p.id) {
@@ -904,11 +903,11 @@ export class Game implements GameApi {
     } else {
       s.phase = 'move'
       await this.doMove(p, steps)
-      if (!p.alive) return
+      if (!p.alive || this.stopped) return
       s.phase = 'landing'
       await this.resolveLanding(p)
     }
-    if (!p.alive) return
+    if (!p.alive || this.stopped) return
 
     // 行动阶段（全体玩家操作配额重置：建造 1 / 升级 1 / 修理 1 / 勘探 1 / 修桥 1）
     s.ops = { ...TURN_OP_LIMITS }
@@ -918,7 +917,7 @@ export class Game implements GameApi {
     } else {
       await aiAct(this, p.id)
     }
-    if (!p.alive) return
+    if (!p.alive || this.stopped) return
 
     // 回合结束
     await this.endTurn(p)
@@ -929,7 +928,7 @@ export class Game implements GameApi {
     const stepMs = s.speedMs > 0 ? Math.max(140, Math.round(s.speedMs * 0.45)) : 0
     this.bridgeTollPaid = false
     for (let i = 0; i < steps; i++) {
-      if (!p.alive) return
+      if (!p.alive || this.stopped) return
       p.pos = (p.pos + 1) % TILE_COUNT
       if (p.pos === 0) {
         p.laps++
@@ -1164,7 +1163,6 @@ export class Game implements GameApi {
           this.sfx('build')
         } else if (ans === 'rest') {
           p.status.moveMod -= 1
-          p.status.rested = true
           this.log(`「${p.name}」在起点小屋休息，下回合移动 -1`, p.id)
         }
         break

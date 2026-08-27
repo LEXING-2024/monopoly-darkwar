@@ -37,7 +37,7 @@ export const FATE_DECK: CardDef[] = [
     desc: '随机一座桥梁受损，过路费暂时翻倍，持续 2 回合。',
     effect: async (game) => {
       const s = game.state
-      const idx = game.rng.chance(0.5) ? 16 : 47
+      const idx = game.rng.chance(0.5) ? WEST_BRIDGE : EAST_BRIDGE
       s.bridgeTollMods.push({ factor: 2, turns: 2, label: '桥梁受损' })
       const bridge = s.tiles[idx]
       if (bridge.bridgeLevel > 0 && game.rng.chance(0.5)) {

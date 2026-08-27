@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { store, respond } from '../store'
 import type { Prompt } from '../../core/types'
+import BaseModal from './BaseModal.vue'
 
 const props = defineProps<{ prompt: Extract<Prompt, { type: 'bid' }> }>()
 const tile = computed(() => store.state?.tiles[props.prompt.tile] ?? null)
@@ -27,6 +28,13 @@ const ownerName = computed(() => {
   return store.state.players[t.owner].name
 })
 const bid = ref(props.prompt.minBid)
+/** 出价有效性：v-model.number 对非法输入（如 "e"、"1e5"）返回原始字符串，
+ *  比较运算符会被强制转换绕过 disabled，必须显式校验有限数字 */
+const bidValid = computed(() => {
+  const b = bid.value
+  return typeof b === 'number' && Number.isFinite(b) &&
+    b >= props.prompt.minBid && b <= props.prompt.myCash
+})
 
 // 5 秒倒计时：不操作则自动放弃（放弃后本场拍卖不再询问）
 const COUNTDOWN = 5
@@ -62,7 +70,8 @@ onBeforeUnmount(stopTimer)
 
 function onBid(): void {
   stopTimer()
-  respond({ pass: false, bid: Math.floor(bid.value) })
+  if (!bidValid.value) return
+  respond({ pass: false, bid: Math.floor(bid.value as number) })
 }
 
 function onPass(): void {
@@ -72,8 +81,7 @@ function onPass(): void {
 </script>
 
 <template>
-  <div class="overlay">
-    <div class="modal">
+  <BaseModal>
       <div class="modal-title">🔨 {{ prompt.title }}</div>
       <div class="modal-body" v-if="tile">
         <p class="big">{{ tile.icon }} {{ tile.name }}</p>
@@ -92,39 +100,16 @@ function onPass(): void {
       </div>
       <div class="modal-actions">
         <button
-          class="btn primary" :disabled="bid < prompt.minBid || bid > prompt.myCash"
+          class="btn primary" :disabled="!bidValid"
           @click="onBid"
-        >出价 {{ Math.floor(bid) }}</button>
+        >出价 {{ bidValid ? Math.floor(Number(bid)) : '—' }}</button>
         <button class="btn pass-btn" @click="onPass">放弃（{{ left }}s）</button>
       </div>
       <p class="countdown-tip">⏳ {{ left }} 秒内未出价将自动放弃，本场拍卖不再询问</p>
-    </div>
-  </div>
+  </BaseModal>
 </template>
 
 <style scoped>
-.overlay {
-  position: fixed; inset: 0; background: rgba(24, 14, 6, 0.72);
-  display: flex; align-items: center; justify-content: center; z-index: 200; /* 流程弹窗置顶，高于详情弹窗 */
-}
-.modal {
-  width: min(380px, 92vw); border-radius: 16px; padding: 22px;
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='300'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.11' numOctaves='4' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncA type='linear' slope='0.11'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='500' height='300' filter='url(%23s)'/%3E%3C/svg%3E"),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncG type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncB type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncA type='linear' slope='0.11'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23m)'/%3E%3C/svg%3E"),
-    radial-gradient(ellipse 130px 76px at 8% 30%, rgba(255, 250, 232, 0.26), transparent 70%),
-    radial-gradient(ellipse 150px 90px at 90% 62%, rgba(255, 248, 226, 0.2), transparent 70%),
-    radial-gradient(ellipse 140px 100px at 12% 80%, rgba(146, 96, 34, 0.14), transparent 72%),
-    radial-gradient(ellipse 170px 120px at 88% 12%, rgba(116, 72, 18, 0.12), transparent 72%),
-    radial-gradient(ellipse 80% 70% at 50% 48%, transparent 58%, rgba(122, 82, 30, 0.28) 100%),
-    linear-gradient(168deg, #f4e5ba 0%, #eed8a4 42%, #e6ca8e 100%);
-  border: 3px solid #8a5a2b;
-  box-shadow:
-    inset 0 0 34px rgba(94, 58, 14, 0.3),
-    inset 0 0 10px rgba(94, 58, 14, 0.24),
-    0 12px 40px rgba(0, 0, 0, 0.6);
-  animation: pop 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
-}
 .modal-title { font-size: 20px; font-weight: bold; color: #5a3a1a; margin-bottom: 10px; }
 .modal-body { color: #4a3018; }
 .big { font-size: 17px; margin: 6px 0; }
@@ -151,5 +136,4 @@ function onPass(): void {
   font-size: 12px;
   color: #8a6a44;
 }
-@keyframes pop { from { transform: scale(0.7); opacity: 0; } }
 </style>

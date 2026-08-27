@@ -15,7 +15,6 @@ interface StoreShape {
   muted: boolean
   speed: 'slow' | 'normal' | 'fast'
   aiDifficulty: AiDifficulty
-  version: number
   saveToast: string
   loading: boolean             // 开始游戏 → 棋盘首帧就绪之间的加载遮罩
   /** 资金不足提示：纯 UI 弹层（不走 game.prompt，避免覆盖行动阶段弹窗的应答器导致软锁） */
@@ -32,7 +31,6 @@ export const store = reactive<StoreShape>({
   muted: false,
   speed: 'normal',
   aiDifficulty: 'normal',
-  version: 0,
   saveToast: '',
   loading: false,
   noMoneyToast: null,
@@ -41,12 +39,15 @@ export const store = reactive<StoreShape>({
 const SPEED_MS = { slow: 1500, normal: 900, fast: 450 } as const
 const SAVE_KEY = 'monopoly-save-v2'   // v2：轮数/季节长度字段与新区划地图；旧版本存档自动作废
 
+/** 当前已挂载的事件桥退订函数（切换对局时必须先解绑旧桥，防止旧对局残留 emit 污染新对局） */
+let detachBridge: (() => void) | null = null
+
 /** 为新对局挂载事件桥（startGame / loadGame 共用） */
 function attachGame(game: Game): void {
-  game.on('state-changed', () => {
+  const offs: (() => void)[] = []
+  offs.push(game.on('state-changed', () => {
     const prev = store.state
     store.state = structuredClone(game.state)
-    store.version++
     // 玩家落位时自动选中当前到达的地块：地块详情优先显示落脚点（购买后也保持显示该地块）
     const ns = store.state
     if (ns && prev?.phase !== 'landing' && ns.phase === 'landing') {
@@ -57,33 +58,41 @@ function attachGame(game: Game): void {
         if (!p.isAI) store.tileModalOpen = true
       }
     }
-  })
-  game.on('prompt', (p: Prompt) => {
+  }))
+  offs.push(game.on('prompt', (p: Prompt) => {
     store.prompt = p
-  })
-  game.on('prompt-resolved', () => {
+  }))
+  offs.push(game.on('prompt-resolved', () => {
     store.prompt = null
-  })
-  game.on('sfx', (name: any) => playSfx(name))
-  game.on('tile-click', (i: number) => {
+  }))
+  offs.push(game.on('sfx', (name: any) => playSfx(name)))
+  offs.push(game.on('tile-click', (i: number) => {
     store.selectedTile = i
     store.tileModalOpen = true   // 点击地块 → 视野中央弹出地块窗口
-  })
-  game.on('building-click', (d: { tile: number; buildingId: number }) => {
+  }))
+  offs.push(game.on('building-click', (d: { tile: number; buildingId: number }) => {
     store.buildingDetail = d
-  })
-  game.on('save-ready', (json: string) => {
+  }))
+  offs.push(game.on('save-ready', (json: string) => {
     localStorage.setItem(SAVE_KEY, json)
     store.saveToast = '已保存'
     setTimeout(() => { store.saveToast = '' }, 2200)
-  })
+  }))
   // 棋盘场景 create() 完成后发出：等一帧渲染再撤掉加载遮罩，避免闪空白
-  game.on('board-ready', () => {
+  offs.push(game.on('board-ready', () => {
     requestAnimationFrame(() => { store.loading = false })
-  })
+  }))
+  detachBridge = () => { for (const f of offs) f(); detachBridge = null }
+}
+
+/** 解绑当前事件桥（开新局 / 回菜单前调用） */
+function detachGame(): void {
+  detachBridge?.()
+  detachBridge = null
 }
 
 export function startGame(setups: PlayerSetup[], seed?: number): void {
+  detachGame()   // 先解绑旧对局事件桥，避免旧局残留 emit 覆盖新对局状态
   localStorage.removeItem(SAVE_KEY)   // 新对局替代旧存档
   const game = new Game()
   const opts: GameOptions = { speedMs: SPEED_MS[store.speed], seed, aiDifficulty: store.aiDifficulty }
@@ -116,6 +125,7 @@ export function hasSave(): boolean {
 export function loadGame(): void {
   const json = localStorage.getItem(SAVE_KEY)
   if (!json) return
+  detachGame()   // 先解绑旧对局事件桥，避免旧局残留 emit 污染读档后的新对局
   const game = new Game()
   game.muted = store.muted
   attachGame(game)
@@ -152,6 +162,7 @@ export function setSpeed(s: 'slow' | 'normal' | 'fast'): void {
 
 export function backToMenu(): void {
   store.game?.stop()
+  detachGame()   // 回菜单：解绑事件桥，残余异步 emit 不再写入 store
   store.game = null
   store.state = null
   store.prompt = null

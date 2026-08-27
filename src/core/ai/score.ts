@@ -5,7 +5,7 @@ import {
   SEASONS, SEASON_ORDER, TILE_COUNT, TERRAIN_RESOURCE, EAST_BRIDGE, WEST_BRIDGE,
 } from '../config'
 import { bridgeToll, exploreCost, globalRentMod, tileOutput, tileRent } from '../economy'
-import type { GameApi, GameState, Player, ResourceType, Season, Terrain, Tile } from '../types'
+import type { GameApi, ResourceType, Season, Terrain, Tile } from '../types'
 import { getBrain } from './brain'
 
 /** 决策视野：剩余回合估计（有界，终局更看重租金收益） */
@@ -141,38 +141,4 @@ export function exploreScore(game: GameApi, playerId: number, tile: Tile): numbe
 /** 是否是洪水沿岸格 */
 function isFloodTile(index: number): boolean {
   return FLOOD_TILES.includes(index)
-}
-
-/** 同地形持有数（垄断协同用） */
-export function sameTerrainCount(game: GameApi, playerId: number, terrain: Terrain): number {
-  return game.state.tiles.filter(t => t.owner === playerId && t.terrain === terrain).length
-}
-
-/** 我未来收益的主力地形（用于垄断冲刺目标选择） */
-export function bestTerrain(game: GameApi, playerId: number): Terrain | null {
-  const s = game.state
-  const score: Partial<Record<Terrain, number>> = {}
-  for (const t of s.tiles) {
-    if (t.type !== 'terrain' || t.terrain === 'none') continue
-    score[t.terrain] = (score[t.terrain] ?? 0) + 1
-  }
-  let best: Terrain | null = null
-  let bestV = -1
-  for (const k of Object.keys(score) as Terrain[]) {
-    const v = sameTerrainCount(game, playerId, k) * 2 + (score[k] ?? 0)
-    if (v > bestV) { bestV = v; best = k }
-  }
-  return best
-}
-
-/** 对手当前对我威胁（简化）：其地块对我的租金威胁和资产规模 */
-export function opponentThreat(game: GameApi, me: Player, other: Player): number {
-  const s = game.state
-  let v = 0
-  for (const t of s.tiles) {
-    if (t.owner !== other.id) continue
-    if (t.type === 'bridge') v += bridgeToll(game, t) * 0.5
-    else v += tileRent(game, t, other) * 0.3
-  }
-  return v + other.cash * 0.05
 }
