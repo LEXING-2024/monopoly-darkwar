@@ -11,7 +11,13 @@ import { getBrain } from './brain'
 import { brainRng, rollAction, saveBrainRng } from './personality'
 import { cashSafetyLine, exploreScore, priceForecast, tileValue } from './score'
 import { resourceOutlook } from './anticipate'
-import type { GameApi, Prompt, ResourceType, Terrain, TradeOffer } from '../types'
+import type { AiBrain, GameApi, Prompt, ResourceType, Terrain, TradeOffer } from '../types'
+
+/** 交易估值权衡：低于 0.85（接受 ≥ 对方价值的 85%）= 急需现金贱卖；高于 1（要求对方多付）= 索价；
+ *  合作倾向低时提高门槛（防吃亏），合作倾向高时降低门槛（促成交易） */
+const EVAL_TRADE_DESPERATE_EDGE = 0.85
+const EVAL_TRADE_NORMAL_EDGE = 1.02
+const EVAL_TRADE_HOSTILITY_PER_COOPERATION = 0.1
 
 export function aiRespond(game: GameApi, prompt: Prompt): any {
   const s = game.state
@@ -35,22 +41,22 @@ export function aiRespond(game: GameApi, prompt: Prompt): any {
     case 'bridge-cross': {
       const p = s.players[prompt.player]
       const brain = getBrain(s, p.id)
-      const rng = brainRng(brain!)
+      const rng = brainRng(brain as AiBrain)
       // 过路费高 → 绕行；风险承受高 → 更敢省过路费（多花 3 步的机会成本）
       const base = prompt.toll > 500 ? 0.75 : 0.35
       const prob = Math.min(0.95, Math.max(0.05, base + (brain?.profile.riskTolerance ?? 0.5) * 0.2 - 0.1))
       const ans = rng.chance(prob)
-      saveBrainRng(brain!, rng)
+      saveBrainRng(brain as AiBrain, rng)
       return { bypass: ans }
     }
     case 'bid':
       return respondBid(game, prompt.player, prompt.tile, prompt.currentBid, prompt.minBid)
-    case 'dilemma':
-      return respondDilemma(game, prompt.player, prompt.other)
     case 'trade-offer':
-      return { accept: evalTrade(game, prompt.to, prompt.give, prompt.receive) }
     case 'trade-response':
-      return { accept: evalTrade(game, prompt.to, prompt.give, prompt.receive) }
+      // evalTrade 的语义是「评估者付出 give、换回 receive」；prompt 里的 give/receive
+      // 是以提议者为视角的（give=提议者付出）。对接收方必须交换，否则 AI 会接受亏本交易、
+      // 拒绝有利交易（历史 bug）。
+      return { accept: evalTrade(game, prompt.to, prompt.receive, prompt.give) }
     case 'pay-or-lose':
       return respondPayOrLose(game, prompt.player, prompt.title, prompt.cost)
     case 'donate':
@@ -104,44 +110,25 @@ function respondBid(game: GameApi, playerId: number, tileIdx: number, currentBid
   return bid > currentBid ? { pass: false, bid } : { pass: true }
 }
 
-// ---------- 囚徒困境（EV + 对手历史 + 实力对比 + 情绪） ----------
-
-function respondDilemma(game: GameApi, playerId: number, otherName: string): 'cooperate' | 'betray' {
-  const s = game.state
-  const p = s.players[playerId]
-  const brain = getBrain(s, playerId)
-  const other = s.players.find(x => x.name === otherName)
-  // 对手背叛概率：历史（一报还一报）优先，无历史按 0.2 + 对手攻击性近似
-  let q = 0.2
-  if (other) {
-    const last = p.dilemmaMem[other.id]?.at(-1)
-    if (last === 'D') q = 0.8
-    else if (last === 'C') q = 0.1
-    else q = 0.2 + other.traits.aggression * 0.15
-  }
-  const evCoop = q * -1000 + (1 - q) * 2000
-  const evBetray = q * -500 + (1 - q) * 3000
-  // 敌意（被背叛/被举报过）与情绪推动背叛；合作倾向推动合作
-  const grudge = brain && other ? brain.memory.filter(m => m.from === other.id && m.kind !== 'cooperate').length * 150 : 0
-  const emotionPush = (brain?.emotion ?? 0) * 400
-  const betrayScore = evBetray + grudge + emotionPush + (brain?.profile.aggression ?? 0.5) * 200
-  const coopScore = evCoop + (brain?.profile.cooperation ?? 0.5) * 300
-  const chosen = rollAction(game, brain!, [
-    { value: 'betray' as const, score: betrayScore },
-    { value: 'cooperate' as const, score: coopScore },
-  ])
-  return chosen ?? 'cooperate'
-}
-
 // ---------- 交易评估（地块按 tileValue，资源按市价与前景，叠加囤积与敌意） ----------
 
 function evalTrade(game: GameApi, playerId: number, give: TradeOffer, receive: TradeOffer): boolean {
   const s = game.state
   const p = s.players[playerId]
   const brain = getBrain(s, playerId)
-  const val = (o: TradeOffer) => {
+  // 交易中的地块按「可变现价值」估算（地价 + 建筑投入），而不是 tileValue 的长期收益现值：
+  // 前者与玩家在交易面板看到的估值一致，也是 AI 出价（1.1×地价等）的锚点；
+  // 用长期现值会让任何现金收购都显得“亏本”，AI 之间永远谈不成交易。
+  const liquidValue = (o: TradeOffer) => {
     let v = o.cash
-    for (const t of o.tiles) v += tileValue(game, playerId, s.tiles[t])
+    for (const t of o.tiles) {
+      const tile = s.tiles[t]
+      v += tile.price + tile.buildings.reduce((a, b) => a + b.invested, 0)
+    }
+    return v
+  }
+  const val = (o: TradeOffer) => {
+    let v = liquidValue(o)
     for (const r of Object.keys(RESOURCES) as ResourceType[]) {
       const units = o.resources[r] ?? 0
       if (!units) continue
@@ -162,7 +149,10 @@ function evalTrade(game: GameApi, playerId: number, give: TradeOffer, receive: T
   const receiveV = val(receive)
   // 急需现金时低价贱卖求生；敌意高 → 抬高要价；合作倾向高 → 放宽
   const safety = cashSafetyLine(game, playerId)
-  const edge = p.cash < safety ? 0.85 : 1.02 + (brain ? 0.1 * (1 - brain.profile.cooperation) : 0.02)
+  const edge = p.cash < safety
+    ? EVAL_TRADE_DESPERATE_EDGE
+    : EVAL_TRADE_NORMAL_EDGE +
+      (brain ? EVAL_TRADE_HOSTILITY_PER_COOPERATION * (1 - brain.profile.cooperation) : 0.02)
   return receiveV >= giveV * edge
 }
 
@@ -204,7 +194,7 @@ function shouldAcceptCard(game: GameApi, playerId: number, cardId: string): bool
     case 'temp-dam': return cost(0.015) && (s.season === 'spring' || (lookahead >= 1 && nextIsSpring(s)))
     case 'auction-commission': return cost(0.005) && s.tiles.some(t => t.owner === null && t.type === 'terrain' && !t.seized)
     case 'insurance': {
-      // 风险承受低或夏季（台风）→ 更愿买保险
+      // 风险承受低 / 高灾害季（夏季台风 / 冬季雪灾）→ 更愿买保险
       const risky = s.season === 'summer' || s.season === 'winter'
       return cost(0.01) && (risky || (brain?.profile.riskTolerance ?? 0.5) < 0.4)
     }
@@ -217,7 +207,7 @@ function shouldAcceptCard(game: GameApi, playerId: number, cardId: string): bool
     case 'hire-workers': return cost(0.008)
     case 'informant': return cost(0.008) && s.tiles.some(t => t.owner === playerId && t.type === 'terrain' && !t.explored)
     case 'bodyguard': return cost(0.015) && isMonopoly(game, playerId)
-    case 'repair-crew': return cost(0.012) && s.tiles.some(t => t.owner === playerId && t.buildings.some(b => b.level < 3))
+    case 'repair-crew': return cost(0.012) && s.tiles.some(t => t.owner === playerId && t.buildings.some(b => b.damaged))
     case 'sabotage': return cost(0.02) && s.tiles.some(t => t.owner !== null && t.owner !== playerId && t.buildings.length > 0)
     case 'steal-resources': return cost(0.015) && s.players.some(
       p => p.alive && p.id !== playerId && (Object.keys(RESOURCES) as ResourceType[]).some(r => p.resources[r] > 0),
@@ -403,7 +393,7 @@ function respondJoinReport(game: GameApi, playerId: number, targetId: number, co
   // 成功后的期望收益：罚款 15% 资产 + 削弱威胁；成本 300
   const targetWealth = target.cash + s.tiles.filter(t => t.owner === targetId).reduce((a, t) => a + t.price, 0)
   const ev = currentProb * targetWealth * 0.05 - cost * 0.5
-  const grudgePush = brain ? brain.memory.filter(m => m.from === targetId && m.kind !== 'cooperate').length * 200 : 0
+  const grudgePush = brain ? brain.memory.filter(m => m.from === targetId).length * 200 : 0
   const coop = (brain?.profile.cooperation ?? 0.5)
   const aggression = (brain?.profile.aggression ?? 0.5)
   const score = ev + grudgePush + (coop * 150 - 75) + aggression * 100

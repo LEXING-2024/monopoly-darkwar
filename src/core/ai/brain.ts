@@ -34,7 +34,6 @@ function initModels(players: Player[], selfId: number): OpponentModel[] {
       monopolyRush: false,
       desperate: false,
       tradeCount: 0,
-      betrayals: 0,
       reportsAgainstMe: 0,
       threat: 0,
     }))
@@ -46,16 +45,15 @@ export function getBrain(state: GameState, playerId: number): AiBrain | null {
 }
 
 /** 每轮衰减：情绪冷却、记忆裁剪 */
-export function decayBrain(brain: AiBrain, state: GameState): void {
+export function decayBrain(brain: AiBrain): void {
   brain.emotion = Math.max(0, brain.emotion * 0.8 - 0.02)
   if (brain.memory.length > 40) brain.memory = brain.memory.slice(-40)
 }
 
 /** 情绪/记忆驱动的「针对某对手的敌意加成」（0 = 无感，1 = 满腹敌意） */
 export function grudge(brain: AiBrain, otherId: number): number {
-  const acts = brain.memory.filter(m => m.from === otherId && m.kind !== 'cooperate')
-  const coop = brain.memory.filter(m => m.from === otherId && m.kind === 'cooperate').length
-  const score = acts.length * 0.25 - coop * 0.1 + (acts.length > 0 ? brain.profile.revenge * 0.2 : 0)
+  const acts = brain.memory.filter(m => m.from === otherId).length
+  const score = acts * 0.25 + (acts > 0 ? brain.profile.revenge * 0.2 : 0)
   return Math.min(1, Math.max(0, score))
 }
 

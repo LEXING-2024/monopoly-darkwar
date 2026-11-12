@@ -4,6 +4,7 @@ import { showNoMoney, store } from '../store'
 import { BUILDING_DEFS } from '../../core/config'
 import { levelCost, repairCost } from '../../core/buildings'
 import BaseModal from './BaseModal.vue'
+import Icon from './Icon.vue'
 
 const d = computed(() => store.buildingDetail)
 const s = computed(() => store.state)
@@ -63,13 +64,13 @@ function onRepair(): void {
 </script>
 
 <template>
-  <BaseModal v-if="d && tile && building && def" width="min(360px, 92vw)" :z="150" @backdrop="close">
+  <BaseModal v-if="d && tile && building && def" width="sm" :z="150" @backdrop="close">
       <div class="modal-title">
-        {{ def.icon }} {{ def.name }}
+        <Icon name="building" :size="18" /> {{ def.name }}
         <span class="lv" v-if="building.level > 1">Lv{{ building.level }}</span>
       </div>
       <div class="modal-body">
-        <p class="big">{{ tile.icon }} {{ tile.name }}</p>
+        <p class="big"><Icon name="map" :size="14" /> {{ tile.name }}</p>
         <p class="muted">{{ def.desc }}</p>
         <p class="muted" v-if="def.category === 'commercial'">商业建筑：不限地形，提升本格租金</p>
         <p class="muted" v-else-if="def.category === 'production'">生产建筑：提升本格资源产出</p>
@@ -83,14 +84,14 @@ function onRepair(): void {
           class="btn primary" :disabled="(s?.ops.upgrade ?? 0) <= 0"
           :title="(s?.ops.upgrade ?? 0) <= 0 ? '本回合升级次数已用完（每回合 1 次）' : ''"
           @click="onUpgrade"
-        >⬆️ 升级（￥{{ upgradeCost }}）</button>
+        ><Icon name="arrowUp" :size="13" /> 升级（￥{{ upgradeCost }}）</button>
         <button
           v-if="myTurn && isMine && building.level < 3 && building.damaged"
           class="btn"
           :disabled="(s?.ops.repair ?? 0) <= 0"
           :title="(s?.ops.repair ?? 0) <= 0 ? '本回合修理次数已用完（每回合 1 次）' : ''"
           @click="onRepair"
-        >🔧 修理（￥{{ repairCost(store.game!, building) }}）</button>
+        ><Icon name="hammer" :size="13" /> 修理（￥{{ repairCost(store.game!, building) }}）</button>
         <button class="btn" @click="close">关闭</button>
       </div>
   </BaseModal>
@@ -106,5 +107,6 @@ function onRepair(): void {
 .big { font-size: 16px; margin: 6px 0; color: #4a3018; }
 .muted { font-size: 13px; color: #7a5a38; margin: 4px 0; }
 .modal-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: center; flex-wrap: wrap; }
+.modal-actions .btn { white-space: nowrap; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

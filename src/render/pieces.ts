@@ -4,90 +4,167 @@ import Phaser from 'phaser'
 import { LAYOUT } from '../core/map'
 import type { Player } from '../core/types'
 
-function makeShapeTexture(scene: Phaser.Scene, key: string, shape: Player['shape'], color: number): void {
-  if (scene.textures.exists(key)) return
-  const g = scene.make.graphics({ x: 0, y: 0 }, false)
-  const T = 96   // 纹理边长（显示尺寸 48，2x 高清）
-  const c = T / 2
-  const R = 42   // 形状外接半径
-  const P = (pts: Phaser.Types.Math.Vector2Like[]): void => {
-    g.fillStyle(color, 1)
-    g.fillPoints(pts, true)
-    // 形状自身轮廓的白线描边（深色细边衬底让白线在羊皮纸上显形）
-    g.lineStyle(9, 0x3a2410, 0.6).strokePoints(pts, true)
-    g.lineStyle(4.5, 0xffffff, 1).strokePoints(pts, true)
-  }
+/** 把颜色与白/黑混合，得到明暗面 */
+function shade(hex: string, amount: number): string {
+  const c = Phaser.Display.Color.HexStringToColor(hex)
+  const t = amount > 0 ? 255 : 0
+  const k = Math.abs(amount)
+  const r = Math.round(c.red + (t - c.red) * k)
+  const g = Math.round(c.green + (t - c.green) * k)
+  const b = Math.round(c.blue + (t - c.blue) * k)
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+function shapePath(
+  ctx: CanvasRenderingContext2D, shape: Player['shape'], c: number, R: number,
+): void {
+  const path = (): void => { ctx.beginPath() }
   switch (shape) {
-    case 'circle': {
-      g.fillStyle(color, 1).fillCircle(c, c, R)
-      g.lineStyle(9, 0x3a2410, 0.6).strokeCircle(c, c, R)
-      g.lineStyle(4.5, 0xffffff, 1).strokeCircle(c, c, R)
+    case 'circle':
+      path()
+      ctx.arc(c, c, R, 0, Math.PI * 2)
+      ctx.closePath()
       break
-    }
-    case 'square': {
-      g.fillStyle(color, 1).fillRoundedRect(c - R, c - R, R * 2, R * 2, 16)
-      g.lineStyle(9, 0x3a2410, 0.6).strokeRoundedRect(c - R, c - R, R * 2, R * 2, 16)
-      g.lineStyle(4.5, 0xffffff, 1).strokeRoundedRect(c - R, c - R, R * 2, R * 2, 16)
+    case 'square':
+      path()
+      ctx.roundRect(c - R, c - R, R * 2, R * 2, R * 0.32)
       break
-    }
-    case 'triangle': {
-      const x1 = c, y1 = c - R + 8, x2 = c - R + 8, y2 = c + R - 6, x3 = c + R - 6, y3 = c + R - 6
-      g.fillStyle(color, 1)
-      g.fillTriangle(x1, y1, x2, y2, x3, y3)
-      g.lineStyle(9, 0x3a2410, 0.6).strokeTriangle(x1, y1, x2, y2, x3, y3)
-      g.lineStyle(4.5, 0xffffff, 1).strokeTriangle(x1, y1, x2, y2, x3, y3)
+    case 'triangle':
+      path()
+      ctx.moveTo(c, c - R + 6)
+      ctx.lineTo(c - R + 6, c + R - 6)
+      ctx.lineTo(c + R - 6, c + R - 6)
+      ctx.closePath()
       break
-    }
     case 'diamond':
-      P([
-        { x: c, y: c - R + 6 }, { x: c + R - 6, y: c },
-        { x: c, y: c + R - 6 }, { x: c - R + 6, y: c },
-      ])
+      path()
+      ctx.moveTo(c, c - R + 5)
+      ctx.lineTo(c + R - 5, c)
+      ctx.lineTo(c, c + R - 5)
+      ctx.lineTo(c - R + 5, c)
+      ctx.closePath()
       break
     case 'star': {
-      const pts: Phaser.Types.Math.Vector2Like[] = []
+      path()
       for (let k = 0; k < 10; k++) {
-        const r = k % 2 === 0 ? R : R * 0.45
+        const r = k % 2 === 0 ? R : R * 0.46
         const a = -Math.PI / 2 + (k * Math.PI) / 5
-        pts.push({ x: c + Math.cos(a) * r, y: c + Math.sin(a) * r })
+        const x = c + Math.cos(a) * r
+        const y = c + Math.sin(a) * r
+        if (k === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
       }
-      P(pts)
+      ctx.closePath()
       break
     }
-    case 'hexagon': {
-      const pts: Phaser.Types.Math.Vector2Like[] = []
+    case 'hexagon':
+      path()
       for (let k = 0; k < 6; k++) {
         const a = -Math.PI / 2 + (k * Math.PI) / 3
-        pts.push({ x: c + Math.cos(a) * R, y: c + Math.sin(a) * R })
+        const x = c + Math.cos(a) * R
+        const y = c + Math.sin(a) * R
+        if (k === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
       }
-      P(pts)
+      ctx.closePath()
       break
-    }
     case 'plus': {
-      const w = R * 0.36
-      P([
-        { x: c - w, y: c - R }, { x: c + w, y: c - R }, { x: c + w, y: c - w }, { x: c + R, y: c - w },
-        { x: c + R, y: c + w }, { x: c + w, y: c + w }, { x: c + w, y: c + R }, { x: c - w, y: c + R },
-        { x: c - w, y: c + w }, { x: c - R, y: c + w }, { x: c - R, y: c - w }, { x: c - w, y: c - w },
-      ])
+      const w = R * 0.34
+      path()
+      ctx.moveTo(c - w, c - R)
+      ctx.lineTo(c + w, c - R)
+      ctx.lineTo(c + w, c - w)
+      ctx.lineTo(c + R, c - w)
+      ctx.lineTo(c + R, c + w)
+      ctx.lineTo(c + w, c + w)
+      ctx.lineTo(c + w, c + R)
+      ctx.lineTo(c - w, c + R)
+      ctx.lineTo(c - w, c + w)
+      ctx.lineTo(c - R, c + w)
+      ctx.lineTo(c - R, c - w)
+      ctx.lineTo(c - w, c - w)
+      ctx.closePath()
       break
     }
     case 'heart': {
-      const pts: Phaser.Types.Math.Vector2Like[] = []
-      for (let k = 0; k <= 26; k++) {
-        const t = (k / 26) * Math.PI * 2
+      path()
+      for (let k = 0; k <= 30; k++) {
+        const t = (k / 30) * Math.PI * 2
         const x = 16 * Math.pow(Math.sin(t), 3)
         const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)
-        pts.push({ x: c + (x * R) / 16, y: c - (y * R) / 16 })
+        const px = c + (x * R) / 16
+        const py = c - (y * R) / 16 - 2
+        if (k === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
       }
-      P(pts)
+      ctx.closePath()
       break
     }
   }
-  // 光泽
-  g.fillStyle(0xffffff, 0.35).fillCircle(c - 9, c - 11, 11)
-  g.generateTexture(key, T, T)
-  g.destroy()
+}
+
+/** 棋子纹理：垂直渐变 + 内阴影 + 高光 + 墨线/奶油双描边（2x 高清） */
+function makeShapeTexture(scene: Phaser.Scene, key: string, shape: Player['shape'], hexColor: string): void {
+  if (scene.textures.exists(key)) return
+  const T = 96
+  const c = document.createElement('canvas')
+  c.width = T
+  c.height = T
+  const ctx = c.getContext('2d')!
+  const cx = T / 2
+  const cy = T / 2
+  const R = 41
+
+  // 底部投影
+  ctx.fillStyle = 'rgba(50, 30, 10, 0.20)'
+  ctx.beginPath()
+  ctx.ellipse(cx, cy + 6, R * 0.92, R * 0.92, 0, 0, Math.PI * 2)
+  ctx.fill()
+
+  // 主体渐变
+  const g = ctx.createLinearGradient(0, cy - R, 0, cy + R)
+  g.addColorStop(0, shade(hexColor, 0.34))
+  g.addColorStop(0.48, hexColor)
+  g.addColorStop(1, shade(hexColor, -0.36))
+  shapePath(ctx, shape, cx, cy)
+  ctx.fillStyle = g
+  ctx.fill()
+
+  // 内侧明暗 + 高光
+  ctx.save()
+  shapePath(ctx, shape, cx, cy)
+  ctx.clip()
+  const inner = ctx.createLinearGradient(0, cy - R * 0.2, 0, cy + R)
+  inner.addColorStop(0, 'rgba(255, 255, 255, 0.06)')
+  inner.addColorStop(1, 'rgba(30, 12, 0, 0.42)')
+  ctx.fillStyle = inner
+  ctx.fillRect(0, 0, T, T)
+  const gloss = ctx.createRadialGradient(cx - R * 0.34, cy - R * 0.42, 1, cx - R * 0.34, cy - R * 0.42, R * 0.72)
+  gloss.addColorStop(0, 'rgba(255, 255, 255, 0.55)')
+  gloss.addColorStop(1, 'rgba(255, 255, 255, 0)')
+  ctx.fillStyle = gloss
+  ctx.fillRect(0, 0, T, T)
+  ctx.restore()
+
+  // 双描边：深墨外圈 + 奶油内线
+  shapePath(ctx, shape, cx, cy)
+  ctx.lineWidth = 6.5
+  ctx.strokeStyle = 'rgba(48, 28, 10, 0.72)'
+  ctx.stroke()
+  shapePath(ctx, shape, cx, cy)
+  ctx.lineWidth = 2.4
+  ctx.strokeStyle = 'rgba(255, 244, 214, 0.92)'
+  ctx.stroke()
+
+  // 中心小徽记（玩家首字）
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = 'bold 27px KaiTi, STKaiti, SimSun, serif'
+  ctx.lineWidth = 3.5
+  ctx.strokeStyle = 'rgba(40, 20, 6, 0.75)'
+  ctx.fillStyle = 'rgba(255, 248, 226, 0.94)'
+
+  scene.textures.addCanvas(key, c)
 }
 
 export class Piece {
@@ -96,37 +173,74 @@ export class Piece {
   animating = false
   private body: Phaser.GameObjects.Image
   private shadow: Phaser.GameObjects.Image
+  private halo: Phaser.GameObjects.Image
   private bobTween: Phaser.Tweens.Tween | null = null
+  private bobState = { v: 0 }
+  private baseY = 0
+  private haloTween: Phaser.Tweens.Tween | null = null
+  private active = false
 
   constructor(scene: Phaser.Scene, player: Player, key: string) {
     this.player = player
-    const color = Phaser.Display.Color.HexStringToColor(player.color).color
-    makeShapeTexture(scene, key, player.shape, color)
+    makeShapeTexture(scene, key, player.shape, player.color)
     const pos = LAYOUT[player.pos]
+    this.baseY = pos.y
 
-    this.shadow = scene.add.image(pos.x, pos.y + 7, 'piece-shadow').setScale(0.5).setAlpha(0.35)
+    this.shadow = scene.add.image(pos.x, pos.y + 7, 'piece-shadow').setScale(0.5).setAlpha(0.4)
+    this.halo = scene.add.image(pos.x, pos.y, 'piece-halo').setScale(0.56).setAlpha(0)
     this.body = scene.add.image(pos.x, pos.y, key).setOrigin(0.5, 0.62).setScale(0.5)
-    this.container = scene.add.container(0, 0, [this.shadow, this.body]).setDepth(50)
+    this.container = scene.add.container(0, 0, [this.halo, this.shadow, this.body]).setDepth(50)
     this.startBob()
   }
 
   private startBob(): void {
-    // 以当前 y 为基准重建轻微浮动（振幅 4.5px）
-    this.bobTween?.destroy()
+    if (this.bobTween) {
+      this.bobTween.resume()
+      return
+    }
+    // 常驻浮动：只创建一次，位置变化时改基准 y，避免每次 state-changed 重建 tween
     this.bobTween = this.body.scene.tweens.add({
-      targets: this.body,
-      y: this.body.y - 4.5,
+      targets: this.bobState,
+      v: { from: 0, to: -4.5 },
       duration: 560,
       yoyo: true,
       repeat: -1,
       ease: 'Sine.easeInOut',
+      onUpdate: () => {
+        if (!this.animating) this.body.y = this.baseY + this.bobState.v
+      },
     })
+  }
+
+  /** 当前行动者：脚下金色光环缓慢呼吸 */
+  setActive(on: boolean): void {
+    if (this.active === on) return
+    this.active = on
+    this.haloTween?.destroy()
+    this.haloTween = null
+    if (on) {
+      this.halo.setVisible(true)
+      this.haloTween = this.halo.scene.tweens.add({
+        targets: this.halo,
+        alpha: { from: 0.30, to: 0.72 },
+        scaleX: { from: 0.56, to: 0.64 },
+        scaleY: { from: 0.56, to: 0.64 },
+        duration: 1100,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      })
+    } else {
+      this.halo.setAlpha(0).setVisible(false)
+    }
   }
 
   setPos(tileIndex: number, offsetX = 0, offsetY = 0): void {
     const p = LAYOUT[tileIndex]
-    this.body.setPosition(p.x + offsetX, p.y + offsetY)
+    this.baseY = p.y + offsetY
+    this.body.setPosition(p.x + offsetX, this.baseY + this.bobState.v)
     this.shadow.setPosition(p.x + offsetX, p.y + 7)
+    this.halo.setPosition(p.x + offsetX, p.y + 2)
     this.startBob()
   }
 
@@ -142,30 +256,69 @@ export class Piece {
     const scene = this.body.scene
     const dur = 170
 
-    // 单段抛物线小跳：x 缓动、y 按正弦拱起 15px，一段完成不再分段衔接（更流畅）
+    // 单段抛物线小跳：x 缓动、y 按正弦拱起 15px
     scene.tweens.add({
       targets: this.body,
       x: tx,
       duration: dur,
       ease: 'Sine.easeInOut',
       onUpdate: (tw) => {
-        const t = tw.progress   // 0~1
+        const t = tw.progress
         this.body.y = sy + (ty - sy) * t - Math.sin(Math.PI * t) * 15
       },
       onComplete: () => {
         this.body.setPosition(tx, ty)
+        this.baseY = ty
         this.animating = false
-        this.startBob()   // 以当前落点为基准重建浮动
+        this.bobState.v = 0
+        this.bobTween?.restart()
+        // 落地轻微压扁
+        this.body.setScale(0.5, 0.42)
+        scene.tweens.add({ targets: this.body, scaleX: 0.5, scaleY: 0.5, duration: 140, ease: 'Back.easeOut' })
         onDone?.()
       },
     })
-    // 影子：与棋子同步移动，始终贴地（无拱起），移动全程同步不脱节
+    // 影子 / 光环与棋子同步平移
     scene.tweens.add({
-      targets: this.shadow,
-      x: tx, y: groundY,
-      duration: dur,
+      targets: this.shadow, x: tx, y: groundY, duration: dur, ease: 'Sine.easeInOut',
+    })
+    scene.tweens.add({ targets: this.halo, x: tx, duration: dur, ease: 'Sine.easeInOut' })
+  }
+
+  /** 沿折线滑行（冬季踏冰绕桥）：从当前位置出发，依次经过 points，终点带偏移坐标 */
+  moveAlong(points: { x: number; y: number }[], onDone?: () => void): void {
+    if (!points.length) return
+    this.animating = true
+    this.bobTween?.pause()
+    const scene = this.body.scene
+    const start = new Phaser.Math.Vector2(this.body.x, this.body.y)
+    const curve = new Phaser.Curves.Spline([
+      start,
+      ...points.map(p => new Phaser.Math.Vector2(p.x, p.y)),
+    ])
+    const end = points[points.length - 1]
+    const proxy = { t: 0 }
+    scene.tweens.add({
+      targets: proxy,
+      t: 1,
+      duration: 340,
       ease: 'Sine.easeInOut',
-      onComplete: () => this.shadow.setPosition(tx, groundY),
+      onUpdate: () => {
+        const p = curve.getPoint(proxy.t)
+        this.body.setPosition(p.x, p.y - Math.sin(Math.PI * proxy.t) * 16)
+        this.shadow.setPosition(p.x, p.y + 7)
+        this.halo.setPosition(p.x, p.y + 2)
+      },
+      onComplete: () => {
+        this.body.setPosition(end.x, end.y)
+        this.baseY = end.y
+        this.animating = false
+        this.bobState.v = 0
+        this.bobTween?.restart()
+        this.body.setScale(0.5, 0.42)
+        scene.tweens.add({ targets: this.body, scaleX: 0.5, scaleY: 0.5, duration: 140, ease: 'Back.easeOut' })
+        onDone?.()
+      },
     })
   }
 
@@ -175,14 +328,23 @@ export class Piece {
 
   destroy(): void {
     this.bobTween?.destroy()
+    this.haloTween?.destroy()
     this.container.destroy(true)
   }
 }
 
 export function pieceOffsets(count: number, index: number): { x: number; y: number } {
   if (count === 1) return { x: 0, y: 0 }
-  const offsets = [
-    { x: -12, y: -10 }, { x: 12, y: -10 }, { x: -12, y: 10 }, { x: 12, y: 10 },
+  // ≤4 人沿用经典四宫格；5~8 人扩展到外圈八位，避免多名玩家在同一格完全重叠
+  if (count <= 4) {
+    const offsets = [
+      { x: -12, y: -10 }, { x: 12, y: -10 }, { x: -12, y: 10 }, { x: 12, y: 10 },
+    ]
+    return offsets[index % offsets.length]
+  }
+  const ring = [
+    { x: 0, y: -15 }, { x: 15, y: -9 }, { x: 16, y: 7 }, { x: 7, y: 15 },
+    { x: -7, y: 15 }, { x: -16, y: 7 }, { x: -15, y: -9 }, { x: 0, y: 0 },
   ]
-  return offsets[index % offsets.length]
+  return ring[index % ring.length]
 }

@@ -1,10 +1,13 @@
 // ============ 命运 / 机会卡牌（文档 5.2 / 5.3，命运 24 张 + 机会 20 张） ============
 
 import {
-  BUILDING_DEFS, EAST_BRIDGE, RESOURCES, SAFE_TURNS, TILE_COUNT, TYPHOON, WEST_BRIDGE,
+  BUILDING_DEFS, EAST_BRIDGE, RESOURCES, SAFE_TURNS, TILE_COUNT, WEST_BRIDGE,
 } from './config'
-import { SEA_POINTS } from './map'
-import { totalValue } from './economy'
+import { makeTyphoonState } from './disasters'
+import { addChain, monopolyInfo, specialReport } from './events'
+import { rollReserve, totalValue } from './economy'
+import { applyPriceShock } from './market'
+import { newBuildingId } from './buildings'
 import type { GameApi, ResourceType, Season, Tile } from './types'
 
 export interface CardDef {
@@ -68,6 +71,7 @@ export const FATE_DECK: CardDef[] = [
       const s = game.state
       for (const r of Object.keys(RESOURCES) as ResourceType[]) {
         s.priceMods.push({ resource: r, factor: 0.7, turns: 2, label: '市场崩盘' })
+        applyPriceShock(game, r, 0.7)   // 立即下跌 30%，而不是只改夹逼下界
       }
       game.log('市场崩盘！所有资源价格 -30%（2 回合）')
     },
@@ -94,7 +98,6 @@ export const FATE_DECK: CardDef[] = [
       game.state.outputModAll.push({ factor: 1.2, turns: 2, label: '丰收年' })
       // 事件链同样受开局保护期约束：前 10 回合不出现
       if (game.state.totalRound > SAFE_TURNS) {
-        const { addChain } = await import('./events')
         addChain(game, 'harvest-crash', null, 2, {})
       }
       game.log('丰收年！所有产出 +20%（2 回合）')
@@ -104,7 +107,7 @@ export const FATE_DECK: CardDef[] = [
     id: 'antitrust-now', name: '匿名举报', icon: '⚖️',
     desc: '无需满足垄断线，即可对垄断度最高的玩家发起一次特殊举报（成功率 40%）。',
     effect: async (game, pid) => {
-      const { monopolyInfo, specialReport } = await import('./events')
+      // (imported statically at top)
       const others = game.state.players.filter(p => p.alive && p.id !== pid)
       if (!others.length) return
       const target = others.sort((a, b) => {
@@ -161,7 +164,6 @@ export const FATE_DECK: CardDef[] = [
         game.log(`「${t.name}」发生石油泄漏！`, pid)
         // 事件链同样受开局保护期约束：前 10 回合不出现
         if (game.state.totalRound > SAFE_TURNS) {
-          const { addChain } = await import('./events')
           addChain(game, 'pollution-protest', pid, 2, {})
         }
       }
@@ -206,7 +208,8 @@ export const FATE_DECK: CardDef[] = [
     id: 'recession', name: '经济萧条', icon: '📉',
     desc: '你的租金收入 -30%，持续 3 回合。',
     effect: async (game, pid) => {
-      game.state.players[pid].status.rentBonus.push({ factor: 0.7, turns: 3, label: '经济萧条' })
+      // 个人租金状态在「自己的回合结束」衰减；turns=N+1 才覆盖 N 个完整轮次
+      game.state.players[pid].status.rentBonus.push({ factor: 0.7, turns: 4, label: '经济萧条' })
       game.log('经济萧条，你的租金收入 -30%（3 回合）', pid)
     },
   },
@@ -253,14 +256,7 @@ export const FATE_DECK: CardDef[] = [
           game.gain(pid, cardMoney(game, 0.01), '警报误报补偿')
           return
         }
-        s.typhoon = {
-          strength: 1 as 1,
-          seaIndex: game.rng.int(0, SEA_POINTS.length - 1),
-          dir: game.rng.chance(0.5) ? 1 : -1,
-          age: 1, maxLife: game.rng.int(TYPHOON.minLife, TYPHOON.maxLife),
-          onLand: false, landTile: null, landTurns: 0,
-          predicted: null, damagedBuildings: false,
-        }
+        s.typhoon = makeTyphoonState(game, 1)
         game.log('台风警报：东南近海生成台风（1 级），将在海上逐步增强！')
         game.sfx('thunder')
         game.emit('typhoon', s.typhoon)
@@ -281,7 +277,7 @@ export const FATE_DECK: CardDef[] = [
             desc: '免费勘探哪块地块？', tiles: unk.map(x => x.index), player: pid, cardId: 'geologist',
           })
         ]
-        const { rollReserve } = await import('./economy')
+        // (imported statically at top)
         t.explored = true
         t.reserve = rollReserve(game)
         game.log(`免费勘探「${t.name}」完成`, pid)
@@ -309,7 +305,8 @@ export const FATE_DECK: CardDef[] = [
     id: 'celebrity', name: '名人来访', icon: '🌟',
     desc: '你收取的租金 +50%，持续 2 回合。',
     effect: async (game, pid) => {
-      game.state.players[pid].status.rentBonus.push({ factor: 1.5, turns: 2, label: '名人来访' })
+      // turns=N+1：抵消本回合结束时的第一次衰减，覆盖接下来 N 个完整轮次
+      game.state.players[pid].status.rentBonus.push({ factor: 1.5, turns: 3, label: '名人来访' })
       game.log('名人来访，租金 +50%（2 回合）', pid)
     },
   },
@@ -374,13 +371,14 @@ export const CHANCE_DECK: CardDef[] = [
       await game.pay(pid, cardMoney(game, 0.025), null, '收购桥梁股份')
       if (!game.state.players[pid].alive) return
       const b = game.rng.pick(bridges)
-      game.state.players[pid].status.bridgeShare.push({ bridge: b, turns: 3 })
+      // turns=N+1：个人状态在本回合结束时先衰减一次，需补偿才能覆盖 N 个完整轮次
+      game.state.players[pid].status.bridgeShare.push({ bridge: b, turns: 4 })
       game.log(`「${game.state.players[pid].name}」获得「${game.state.tiles[b].name}」30% 过路费分成（3 回合）`, pid)
     },
   },
   {
     id: 'temp-dock', name: '修建临时码头', icon: '⛵', cost: 200,
-    desc: '支付人均 GDP 的 1%，本回合过河免过路费。',
+    desc: '支付人均 GDP 的 1%，下次过河免过路费。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.01), null, '临时码头')
       if (game.state.players[pid].alive) {
@@ -402,7 +400,10 @@ export const CHANCE_DECK: CardDef[] = [
       game.state.players[pid].cash -= cost
       game.state.players[pid].stats.spent += cost
       game.state.players[pid].resources[res] += 10
-      game.state.speculation.push({ player: pid, resource: res, units: 10, turns: 1 })
+      // turns=2：本回合结束时先减到 1，下一个自己的回合结束时才到期结算，
+      // 这样才是「下回合按当时价格卖出」。turns=1 会在抽到卡的当回合立刻按原价卖掉，
+      // 等于无风险稳赚 50%。
+      game.state.speculation.push({ player: pid, resource: res, units: 10, turns: 2 })
       game.log(`「${game.state.players[pid].name}」半价囤入 10 单位${RESOURCES[res].name}`, pid)
     },
   },
@@ -420,7 +421,6 @@ export const CHANCE_DECK: CardDef[] = [
           desc: '勘探哪块沙漠地块？', tiles: unk.map(x => x.index), player: pid, cardId: 'geologist-hire',
         })
       ]
-      const { rollReserve } = await import('./economy')
       t.explored = true
       t.reserve = rollReserve(game)
       game.log(`「${t.name}」勘探完成`, pid)
@@ -439,17 +439,19 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'market-fair', name: '开办集市', icon: '🏪', cost: 200,
-    desc: '支付人均 GDP 的 1%，你的一块地块本回合租金 +50%。',
+    desc: '支付人均 GDP 的 1%，你收取的租金 +50%，持续到你的下回合结束。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.01), null, '开办集市')
       if (game.state.players[pid].alive) {
-        game.state.players[pid].status.rentBonus.push({ factor: 1.5, turns: 1, label: '开办集市' })
+        // turns=1 会在本回合结束时立刻过期——而租金只在对手回合收取，等于完全无效。
+        // 设为 2 才能覆盖接下来一整轮对手的行动。
+        game.state.players[pid].status.rentBonus.push({ factor: 1.5, turns: 2, label: '开办集市' })
       }
     },
   },
   {
     id: 'temp-dam', name: '建造临时堤坝', icon: '🏗️', cost: 300,
-    desc: '支付人均 GDP 的 1.5%，本季节内你的河流沿岸地块不受洪水影响。',
+    desc: '支付人均 GDP 的 1.5%，接下来 3 轮你的桥梁两侧地块不受洪水影响。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.015), null, '临时堤坝')
       if (game.state.players[pid].alive) {
@@ -476,7 +478,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'insurance', name: '购买保险', icon: '🛡️', cost: 200,
-    desc: '支付人均 GDP 的 1%，若下回合你的地块受灾害，损失由银行承担。',
+    desc: '支付人均 GDP 的 1%，接下来 2 轮你的地块受灾害时，损失由银行承担。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.01), null, '购买保险')
       if (game.state.players[pid].alive) {
@@ -508,7 +510,8 @@ export const CHANCE_DECK: CardDef[] = [
           desc: `获得图纸：${BUILDING_DEFS[tid].name}，建在哪块地上？`, tiles: myTiles.map(x => x.index), player: pid, cardId: 'tech-invest',
         })
       ]
-      tile.buildings.push({ id: game.state.turn * 100 + game.rng.int(1, 99), type: tid, level: 1, invested: 500 })
+      // invested 记录真实造价：它参与资产估值与破产半价折现，旧实现写死 500 会严重低估
+      tile.buildings.push({ id: newBuildingId(game), type: tid, level: 1, invested: BUILDING_DEFS[tid].cost })
       game.log(`免费建成了${BUILDING_DEFS[tid].icon}${BUILDING_DEFS[tid].name}！`, pid)
     },
   },
@@ -534,11 +537,12 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'water-invest', name: '投资水利', icon: '💧', cost: 300,
-    desc: '支付人均 GDP 的 1.5%，河流沿岸你的地块租金 +30%，持续 3 回合。',
+    desc: '支付人均 GDP 的 1.5%，你收取的租金 +30%，持续 3 回合。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.015), null, '投资水利')
       if (game.state.players[pid].alive) {
-        game.state.players[pid].status.rentBonus.push({ factor: 1.3, turns: 3, label: '投资水利' })
+        // turns=N+1：覆盖接下来 3 个完整轮次（个人状态在本回合结束先衰减一次）
+        game.state.players[pid].status.rentBonus.push({ factor: 1.3, turns: 4, label: '投资水利' })
       }
     },
   },
@@ -606,7 +610,6 @@ export const CHANCE_DECK: CardDef[] = [
       if (!unk.length) { game.log('没有待勘探地块'); return }
       await game.pay(pid, cardMoney(game, 0.008), null, '情报贩子')
       if (!game.state.players[pid].alive) return
-      const { rollReserve } = await import('./economy')
       for (const t of unk) {
         t.explored = true
         t.reserve = rollReserve(game)
@@ -630,17 +633,18 @@ export const CHANCE_DECK: CardDef[] = [
     id: 'repair-crew', name: '维修队', icon: '🔧', cost: 250,
     desc: '支付人均 GDP 的 1.2%，免费修理你的一座受损建筑。',
     effect: async (game, pid) => {
-      const hasTarget = ownerTiles(game, pid).some(t => t.buildings.some(b => b.level < 3))
+      // 只修复「受损待修」建筑（damaged），不能把完好低级建筑当成修理目标白升一级
+      const hasTarget = ownerTiles(game, pid).some(t => t.buildings.some(b => b.damaged))
       if (!hasTarget) { game.log('没有受损建筑'); return }
       await game.pay(pid, cardMoney(game, 0.012), null, '维修队')
       if (!game.state.players[pid].alive) return
       // 现金不足支付会强制变卖拆除建筑（pay 内部路径），必须按支付后的状态重新选取
-      const damaged = ownerTiles(game, pid).filter(t => t.buildings.some(b => b.level < 3))
+      const damaged = ownerTiles(game, pid).filter(t => t.buildings.some(b => b.damaged))
       if (!damaged.length) { game.log('维修队抵达，但建筑已因变卖拆除', pid); return }
       const t = game.rng.pick(damaged)
-      const b = t.buildings.find(x => x.level < 3)!
-      b.level = (b.level + 1) as 1 | 2 | 3
-      game.log(`维修队修复了「${t.name}」的${BUILDING_DEFS[b.type].name}`, pid)
+      const b = t.buildings.find(x => x.damaged)!
+      b.damaged = false   // 与全局修理语义一致：只恢复收益，不提升等级
+      game.log(`维修队修复了「${t.name}」的${BUILDING_DEFS[b.type].name}，恢复收益`, pid)
     },
   },
   {
@@ -787,6 +791,3 @@ export const CHANCE_DECK: CardDef[] = [
     },
   },
 ]
-
-export const ALL_CARDS: CardDef[] = [...FATE_DECK, ...CHANCE_DECK]
-export const CARD_BY_ID: Record<string, CardDef> = Object.fromEntries(ALL_CARDS.map(c => [c.id, c]))

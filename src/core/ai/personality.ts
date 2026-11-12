@@ -7,7 +7,8 @@ import { RNG } from '../rng'
 /** 按难度 + 随机生成性格：难度决定噪声/犯错/预判/现金安全线，性格值在难度内随机保证个性差异 */
 export function makeProfile(rng: RNG, difficulty: AiDifficulty): AiProfile {
   const d = AI_DIFFICULTY[difficulty]
-  const rand = (): number => Math.round((0.2 + rng.next() * 0.8) * 100) / 100   // 0.2~1.0
+  // 性格 0.2~1.0 连续分布（保留浮点精度；之前量化到 0.01 步长纯属无意义损耗）
+  const rand = (): number => 0.2 + rng.next() * 0.8
   return {
     aggression: rand(),
     riskTolerance: rand(),

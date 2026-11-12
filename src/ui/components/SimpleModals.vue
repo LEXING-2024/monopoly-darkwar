@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, watch } from 'vue'
 import { respond, store } from '../store'
 import { RESOURCES } from '../../core/config'
 import type { Prompt } from '../../core/types'
@@ -17,16 +17,25 @@ const specIncome = computed(() => {
 // AI 回合的通知自动关闭（auto 在发起时刻由 game.notice 确定，人类回合的通知必须点确定）
 const autoClose = computed(() => props.prompt.type === 'notice' && props.prompt.auto === true)
 let timer: ReturnType<typeof setTimeout> | null = null
-onMounted(() => {
-  if (autoClose.value) timer = setTimeout(() => respond(null), 2600)
-})
+/** 监听提示对象本身而不是只在 mounted 时启动一次：连续两条 AI 通知在同一渲染批次内切换时，
+ *  组件实例会被复用（不会重新 mounted），旧实现第二条通知就再也不会自动关闭。 */
+function scheduleAutoClose(): void {
+  if (timer) { clearTimeout(timer); timer = null }
+  if (!autoClose.value) return
+  const p = props.prompt
+  timer = setTimeout(() => {
+    timer = null
+    if (store.prompt === p) respond(null)
+  }, 2600)
+}
+watch(() => props.prompt, scheduleAutoClose, { immediate: true })
 onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
 })
 </script>
 
 <template>
-  <BaseModal width="min(400px, 92vw)">
+  <BaseModal width="md">
     <!-- 通知 -->
     <div v-if="prompt.type === 'notice'">
       <div class="modal-title">{{ prompt.icon }} {{ prompt.title }}</div>

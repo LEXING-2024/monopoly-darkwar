@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { store } from '../store'
-import { RESOURCES } from '../../core/config'
-import type { ResourceType } from '../../core/types'
+import { RESOURCES, RESOURCE_ORDER } from '../../core/config'
+import type { ResourceType, Terrain } from '../../core/types'
+import Icon from './Icon.vue'
 
 const s = computed(() => store.state)
 /** 无本地热座：主信息区固定显示人类玩家自己，AI 行动时不切换 */
 const human = computed(() => (s.value ? s.value.players.find(p => !p.isAI) ?? null : null))
-const current = computed(() => (s.value ? s.value.players[s.value.currentPlayer] ?? null : null))
 const viewId = ref(-1)
 const viewed = computed(() => {
   if (!s.value || !human.value) return null
@@ -18,29 +18,54 @@ const viewedTiles = computed(() => {
   if (!s.value || !viewed.value) return []
   return s.value.tiles.filter(t => t.owner === viewed.value!.id)
 })
+const cur = computed(() => (s.value ? s.value.players[s.value.currentPlayer] : null))
 
+const TERRAIN_DOT: Record<Terrain, string> = {
+  forest: '#5b7f45', plateau: '#a8844f', desert: '#d2a45a', coast: '#5e98a0',
+}
+function terrainOf(name: string): Terrain {
+  if (name.startsWith('森林')) return 'forest'
+  if (name.startsWith('高原')) return 'plateau'
+  if (name.startsWith('沙漠')) return 'desert'
+  return 'coast'
+}
+function shortTile(name: string): string {
+  const m = name.match(/·(\d+)号地/)
+  if (m) return `${name.slice(0, name.indexOf('·'))}${m[1]}`
+  return name
+}
 function viewPlayer(id: number): void {
   viewId.value = viewId.value === id ? -1 : id
 }
+const fmt = (n: number): string => Math.round(n).toLocaleString()
 </script>
 
 <template>
-  <div class="paper card" v-if="s && human">
+  <div class="paper card player-card" v-if="s && human">
+    <div class="card-head">
+      <span class="ch-icon"><Icon name="scroll" :size="14" /></span>
+      <b>你的账册</b>
+      <span class="ch-rule" />
+      <span class="ch-meta">现金 · 资产 · 库存</span>
+    </div>
+    <!-- 本人概览 -->
     <div class="me">
       <span class="token" :style="{ background: human.color }" />
       <div class="me-info">
-        <b>{{ human.name }}</b>
-        <span class="cash">💰 {{ human.cash }} <i>现金</i></span>
+        <b class="me-name">{{ human.name }}</b>
+        <span class="cash"><Icon name="coin" :size="15" /> {{ fmt(human.cash) }} <i>现金</i></span>
       </div>
-      <div class="badges">
-        <span v-if="human.status.rentFree > 0" class="badge">免过路费</span>
-        <span v-if="human.status.insuredTurns > 0" class="badge">🛡️保险</span>
-        <span v-if="human.status.antitrustTurns > 0" class="badge">💼游说 -{{ (-human.status.antitrustMod * 100).toFixed(0) }}%</span>
-        <span v-if="human.status.floodImmune > 0" class="badge">🏗️堤坝</span>
-        <span v-if="human.status.moveMod !== 0" class="badge">步数{{ human.status.moveMod > 0 ? '+' : '' }}{{ human.status.moveMod }}</span>
-      </div>
+      <span class="me-pos"><Icon name="map" :size="12" /> {{ human.pos === 0 ? '起点' : `${human.pos} 号地` }}</span>
+    </div>
+    <div class="badges" v-if="human.status.rentFree > 0 || human.status.insuredTurns > 0 || human.status.antitrustTurns > 0 || human.status.floodImmune > 0 || human.status.moveMod !== 0">
+      <span v-if="human.status.rentFree > 0" class="badge"><Icon name="shield" :size="11" /> 免过路费</span>
+      <span v-if="human.status.insuredTurns > 0" class="badge"><Icon name="shield" :size="11" /> 保险 {{ human.status.insuredTurns }}</span>
+      <span v-if="human.status.antitrustTurns > 0" class="badge"><Icon name="briefcase" :size="11" /> 游说 -{{ (-human.status.antitrustMod * 100).toFixed(0) }}%</span>
+      <span v-if="human.status.floodImmune > 0" class="badge"><Icon name="wave" :size="11" /> 堤坝</span>
+      <span v-if="human.status.moveMod !== 0" class="badge"><Icon name="dice" :size="11" /> 步数{{ human.status.moveMod > 0 ? '+' : '' }}{{ human.status.moveMod }}</span>
     </div>
 
+    <!-- 全员账目 -->
     <div class="players">
       <div
         v-for="p in s.players" :key="p.id"
@@ -49,87 +74,219 @@ function viewPlayer(id: number): void {
         @click="p.alive && viewPlayer(p.id)"
       >
         <span class="p-token" :style="{ background: p.color }" />
-        <span class="p-name">{{ p.name }}{{ p.isAI ? '(AI)' : '' }}</span>
-        <span class="p-tiles">🗺️{{ s.tiles.filter(t => t.owner === p.id).length }}</span>
-        <span class="p-cash">{{ p.alive ? `💰${p.cash}` : '💀出局' }}</span>
+        <span class="p-name">{{ p.name }}<em v-if="p.isAI">AI</em></span>
+        <span class="p-tiles" title="持有地块"><Icon name="map" :size="12" />{{ s.tiles.filter(t => t.owner === p.id).length }}</span>
+        <span class="p-cash" :class="{ neg: p.alive && p.cash < 0 }">
+          <template v-if="p.alive"><Icon name="coin" :size="12" />{{ fmt(p.cash) }}</template>
+          <template v-else>出局</template>
+        </span>
+        <span v-if="cur && p.id === s.currentPlayer" class="p-now">行动中</span>
       </div>
     </div>
 
+    <!-- 资产 -->
     <div class="my-assets" v-if="viewed && viewedTiles.length">
-      <div class="asset-head">{{ viewId >= 0 ? `「${viewed.name}」的资产` : '我的资产（点击玩家查看他人资产）' }}</div>
+      <div class="asset-head">
+        <span><Icon name="building" :size="12" /> {{ viewId >= 0 ? `「${viewed.name}」的资产` : '我的资产' }}</span>
+        <span class="asset-count">{{ viewedTiles.length }} 块</span>
+      </div>
       <div class="asset-grid">
         <button
           v-for="t in viewedTiles" :key="t.index"
           class="asset-btn" :class="{ sel: store.selectedTile === t.index }"
+          :title="`${t.name} · ￥${t.price} · 点击查看详情`"
           @click="store.selectedTile = t.index; store.tileModalOpen = true"
         >
-          {{ t.icon }} {{ t.name }}<i class="tprice">￥{{ t.price }}</i>
+          <span class="dot" :style="{ background: TERRAIN_DOT[terrainOf(t.name)] }" />
+          <span class="aname">{{ shortTile(t.name) }}</span>
+          <i class="tprice">￥{{ t.price }}</i>
           <span v-if="t.explored" class="reserve" :class="t.reserve">
             {{ t.reserve === 'rich' ? '富' : t.reserve === 'poor' ? '贫' : '普' }}
           </span>
-          <span class="bldg" v-for="b in t.buildings" :key="b.id">🏗️{{ b.level }}</span>
-          <span v-if="t.disaster" class="dis">⚠️</span>
+          <span class="bldg" v-if="t.buildings.length"><Icon name="building" :size="10" />{{ t.buildings.length }}</span>
+          <span v-if="t.disaster" class="dis">⚠</span>
         </button>
       </div>
     </div>
 
+    <div class="asset-empty" v-if="viewed && !viewedTiles.length">
+      <span class="ae-icon"><Icon name="map" :size="20" /></span>
+      <span><b>尚未置地</b><i>从路边第一块地开始</i></span>
+    </div>
+
+    <!-- 资源库存 -->
     <div class="inv">
       <span
-        v-for="(r, k) in viewed.resources" :key="k"
+        v-for="r in RESOURCE_ORDER" :key="r"
         class="inv-item"
-        :title="RESOURCES[k as ResourceType].name"
-      >{{ RESOURCES[k as ResourceType].icon }}{{ Math.floor(r) }}</span>
+        :class="'res-' + r"
+        :title="`${RESOURCES[r as ResourceType].name}：${Math.floor(viewed.resources[r])}`"
+      ><Icon :name="r" :size="14" /><b>{{ Math.floor(viewed.resources[r]) }}</b></span>
     </div>
   </div>
 </template>
 
 <style scoped>
-.card { padding: 12px 14px; }
-.me { display: flex; align-items: center; gap: 10px; }
-.token { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid #fff; box-shadow: 0 2px 5px rgba(0,0,0,.35); flex: none; }
-.me-info { display: flex; flex-direction: column; }
-.cash { color: #a5711f; font-weight: bold; font-size: 17px; }
-.cash i { font-style: normal; font-size: 11px; color: #8a6a44; }
-.badges { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
-.badge { font-size: 11px; background: #f0dfae; border: 1px solid #c9a227; color: #6a4a18; border-radius: 10px; padding: 1px 7px; }
-.players { margin-top: 10px; border-top: 1px dashed #c9b28a; padding-top: 8px; display: flex; flex-direction: column; gap: 3px; }
-.p-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 2px 6px; border-radius: 8px; cursor: pointer; }
-.p-row:hover { background: rgba(160, 120, 60, 0.14); }
-.p-row.cur { background: rgba(255, 215, 106, 0.22); }
-.p-row.viewing { outline: 2px solid #d9a53d; }
-.p-row.dead { opacity: 0.5; text-decoration: line-through; cursor: default; }
-.p-token { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #fff; flex: none; }
-.p-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.p-cash { font-weight: bold; color: #6a4a18; }
+.player-card { padding: 9px 13px 11px; }
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 7px;
+  border-bottom: 1px solid rgba(160, 120, 60, 0.3);
+}
+.ch-icon {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  color: var(--brass-3);
+  border: 1px solid rgba(138, 95, 31, 0.45);
+  background: rgba(255, 248, 226, 0.55);
+}
+.card-head b {
+  font-size: 13px;
+  color: var(--ink);
+  letter-spacing: 2px;
+  font-weight: bold;
+}
+.ch-rule { flex: 1; height: 1px; background: linear-gradient(90deg, rgba(138, 95, 31, 0.35), transparent); }
+.ch-meta { font-size: 9.5px; color: var(--ink-4); letter-spacing: 1px; }
+.me { display: flex; align-items: center; gap: 9px; }
+.token {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 2px solid #f8ecd0;
+  box-shadow:
+    inset -2px -3px 5px rgba(0, 0, 0, 0.35),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.4),
+    0 2px 5px rgba(0, 0, 0, 0.35);
+  flex: none;
+}
+.me-info { display: flex; flex-direction: column; min-width: 0; }
+.me-name { font-size: 15px; color: var(--ink); letter-spacing: 0.5px; }
+.cash {
+  display: inline-flex; align-items: center; gap: 3px;
+  color: #8a5a16; font-weight: bold; font-size: 17px;
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+.cash :deep(.ui-icon) { color: var(--brass-3); }
+.cash i { font-style: normal; font-size: 10.5px; color: var(--ink-3); font-family: var(--font-hand); margin-left: 1px; }
+.me-pos {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10.5px; color: var(--ink-3);
+  padding: 2px 6px; border-radius: 6px;
+  border: 1px solid rgba(138, 95, 31, 0.35);
+  background: rgba(255, 248, 226, 0.4);
+  white-space: nowrap;
+}
+.badges { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 7px; }
+.badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10.5px; background: rgba(240, 223, 174, 0.7);
+  border: 1px solid rgba(201, 162, 74, 0.75); color: #6a4a18;
+  border-radius: 8px; padding: 1px 6px;
+}
+.players {
+  margin-top: 8px; border-top: 1px dashed rgba(160, 120, 60, 0.45);
+  padding-top: 5px; display: flex; flex-direction: column; gap: 1px;
+}
+.p-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; padding: 3px 6px; border-radius: 7px; cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background 0.12s ease;
+}
+.p-row:hover { background: rgba(160, 120, 60, 0.13); }
+.p-row.cur { background: rgba(255, 215, 106, 0.22); border-left-color: var(--brass-3); }
+.p-row.viewing { background: rgba(255, 248, 226, 0.55); outline: 1px solid rgba(201, 162, 74, 0.75); }
+.p-row.dead { opacity: 0.5; cursor: default; }
+.p-token {
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 1.5px solid rgba(255, 252, 240, 0.9);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  flex: none;
+}
+.p-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.p-name em { font-style: normal; font-size: 9.5px; color: var(--ink-3); margin-left: 3px; }
+.p-tiles, .p-cash { display: inline-flex; align-items: center; gap: 2px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.p-cash { font-weight: bold; color: #6a4a18; min-width: 52px; justify-content: flex-end; }
+.p-cash.neg { color: var(--bad); }
+.p-now {
+  font-size: 9.5px; color: #7c5414; background: rgba(255, 219, 128, 0.5);
+  border-radius: 6px; padding: 0 5px; white-space: nowrap;
+}
 .my-assets { margin-top: 8px; }
-.asset-head { font-size: 12px; color: #8a6a44; margin-bottom: 4px; }
+.asset-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; color: var(--ink-3); margin-bottom: 4px;
+}
+.asset-head span { display: inline-flex; align-items: center; gap: 3px; }
+.asset-count { opacity: 0.8; }
 .asset-grid { display: flex; flex-wrap: wrap; gap: 4px; }
 .asset-btn {
-  font-size: 12px; padding: 3px 8px; border-radius: 7px; cursor: pointer;
-  color: #f7e7c0; text-shadow: 0 1px 1px rgba(30, 15, 0, 0.6);
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; padding: 3px 7px; border-radius: 7px; cursor: pointer;
+  color: var(--ink-2);
   background-image:
-    /* 木节 */
-    radial-gradient(ellipse 6px 5px at 84% 70%, rgba(55, 26, 4, 0.5), transparent 75%),
-    /* 木纹 */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015 0.26' numOctaves='3' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncG type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncB type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncA type='linear' slope='0.3'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='120' filter='url(%23w)'/%3E%3C/svg%3E"),
-    /* 独有磨损（污渍斑+划痕，各按钮略有不同） */
-    var(--wear, var(--wear-1)),
-    linear-gradient(180deg, #ac8046 0%, #8a6330 55%, #6f4c20 100%);
-  border: 1px solid #46300e;
-  box-shadow:
-    inset 0 1px 1px rgba(255, 232, 180, 0.4),
-    inset 0 -2px 3px rgba(40, 20, 0, 0.45),
-    0 1px 0 #37230a;
+    var(--tex-paper),
+    linear-gradient(180deg, #fbf1d8, #eedbac);
+  background-size: 180px 180px, auto;
+  border: 1px solid rgba(138, 95, 31, 0.45);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 240, 0.6), 0 1px 2px rgba(0, 0, 0, 0.18);
+  white-space: nowrap;
 }
-.asset-btn:nth-child(4n+2) { --wear: var(--wear-2); }
-.asset-btn:nth-child(4n+3) { --wear: var(--wear-3); }
-.asset-btn:nth-child(4n) { --wear: var(--wear-4); }
-.asset-btn.sel { outline: 2px solid #d9a53d; filter: brightness(1.18); }
-.tprice { font-style: normal; color: #8a5a2b; font-size: 11px; margin-left: 2px; }
-.reserve.rich { color: #b8860b; font-weight: bold; }
-.reserve.poor { color: #7a7a7a; }
-.bldg { color: #8a5a2b; }
-.dis { color: #d94f3d; }
-.inv { display: flex; gap: 8px; margin-top: 8px; font-size: 14px; }
-.inv-item { color: #4a3018; }
+.asset-btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
+.asset-btn.sel { outline: 1.5px solid var(--brass); filter: brightness(1.06); }
+.dot { width: 7px; height: 7px; border-radius: 50%; border: 1px solid rgba(255, 248, 226, 0.7); flex: none; }
+.tprice { font-style: normal; color: #7a5418; font-family: var(--font-num); font-size: 10px; }
+.reserve.rich { color: #7c5209; font-weight: 800; }
+.reserve.poor { color: #695844; font-weight: 600; }
+.reserve { font-size: 9.5px; }
+.bldg { display: inline-flex; align-items: center; gap: 1px; color: #6a4a18; font-size: 10px; }
+.dis { color: var(--rise-ink); font-size: 10px; font-weight: 700; }
+.inv {
+  display: flex; gap: 5px; margin-top: 8px;
+  border-top: 1px dashed rgba(160, 120, 60, 0.45); padding-top: 6px;
+}
+.inv-item {
+  --res-ink: var(--brass-3);
+  --res-bg: rgba(255, 248, 226, 0.55);
+  --res-line: rgba(138, 95, 31, 0.32);
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11.5px; color: var(--ink-2);
+  background: var(--res-bg);
+  border: 1px solid var(--res-line);
+  border-radius: 6px; padding: 2px 6px;
+}
+.inv-item.res-wood { --res-ink: #2e6a3c; --res-bg: #e8f1df; --res-line: #93b481; }
+.inv-item.res-beef { --res-ink: #9a3a2a; --res-bg: #f7e6dd; --res-line: #cf9a86; }
+.inv-item.res-oil { --res-ink: #494238; --res-bg: #ece5d8; --res-line: #a99a80; }
+.inv-item.res-fish { --res-ink: #17697a; --res-bg: #ddf0f1; --res-line: #84bcc4; }
+.asset-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px dashed rgba(138, 95, 31, 0.35);
+  border-radius: 8px;
+  color: var(--ink-3);
+}
+.ae-icon {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  color: var(--brass-3);
+  background: rgba(255, 248, 226, 0.5);
+  border: 1px solid rgba(138, 95, 31, 0.3);
+  flex: none;
+}
+.asset-empty span:last-child { display: flex; flex-direction: column; gap: 1px; }
+.asset-empty b { font-size: 11.5px; color: var(--ink-2); font-weight: bold; letter-spacing: 1px; }
+.asset-empty i { font-style: normal; font-size: 10px; color: var(--ink-4); }
+.inv-item b { font-family: var(--font-num); color: var(--ink); font-weight: bold; }
+.inv-item :deep(.ui-icon) { color: var(--res-ink); }
+.inv-item b { color: var(--res-ink); }
 </style>

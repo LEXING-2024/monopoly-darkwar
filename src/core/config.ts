@@ -8,7 +8,7 @@ export const START_BONUS = 1000
 export const INITIAL_CASH = 15000
 export const LOG_CAP = 200
 export const MAX_TURNS = 4000
-/** 前 N 轮保护期：不触发自然灾害与囚徒困境（1 轮 = 全部存活玩家各行动一次） */
+/** 前 N 轮保护期：不触发自然灾害（1 轮 = 全部存活玩家各行动一次） */
 export const SAFE_TURNS = 10
 /** 每回合操作配额（每位玩家独立计次：进入各自行动阶段时重置）。
  *  人类与 AI 同数：建造 ≤1、升级 ≤1、修理 ≤1、勘探 ≤1、修桥 ≤1。
@@ -18,11 +18,17 @@ export const TURN_OP_LIMITS = { build: 1, upgrade: 1, repair: 1, explore: 1, bri
 /** 开局租金缓启动：前 N 轮租金从 60% 线性恢复到 100%（保护早期现金流，不增加购买力） */
 export const RENT_RAMP_ROUNDS = 20
 export const RENT_RAMP_MIN = 0.6
+/** 反僵持：对局拖长后租金逐步上涨，迫使玩家正面对决（只影响后期，不改变开局节奏）。
+ *  从第 START 轮起每轮 +PER_ROUND，最高 +MAX；例如 55 轮起、1.5%/轮、封顶 400%。
+ *  只影响 300+ 轮的长局，正常节奏（中位 <100 轮）几乎不受影响。 */
+export const RENT_STALL_START = 55
+export const RENT_STALL_PER_ROUND = 0.015
+export const RENT_STALL_MAX = 4.0
 /** 每季持续轮数范围（每季随机抽取，玩家无法预判季节更替时机） */
 export const SEASON_LEN_MIN = 10
 export const SEASON_LEN_MAX = 15
 
-// ---------- 玩家（支持 2~8 人） ----------
+// ---------- 玩家（支持 4~8 人；2~3 人仅供旧存档/内部模拟） ----------
 export const PLAYER_COLORS = [
   '#d94f3d', '#3d7fd9', '#3da35d', '#d9a53d',
   '#9a5bd0', '#d95a9a', '#40b8b0', '#c07a3a',
@@ -41,11 +47,11 @@ export interface ResourceDef {
 }
 
 export const RESOURCES: Record<ResourceType, ResourceDef> = {
-  // 文档 4.1：初始产出/回合 100~150（按市价折算 ≈ 1 单位/回合）
-  wood: { name: '木材', icon: '🌲', terrain: 'forest', basePrice: 120, baseOutput: 1 },
-  beef: { name: '牛肉', icon: '🐄', terrain: 'plateau', basePrice: 100, baseOutput: 1 },
-  oil: { name: '石油', icon: '⛽', terrain: 'desert', basePrice: 150, baseOutput: 1 },
-  fish: { name: '鱼类', icon: '🐟', terrain: 'coast', basePrice: 130, baseOutput: 1 },
+  // 单地块基础产出 0.5 单位/回合；建采集建筑后每级 +50%，L3 为 1.25 单位/回合
+  wood: { name: '木材', icon: '🌲', terrain: 'forest', basePrice: 120, baseOutput: 0.5 },
+  beef: { name: '牛肉', icon: '🐄', terrain: 'plateau', basePrice: 100, baseOutput: 0.5 },
+  oil: { name: '石油', icon: '⛽', terrain: 'desert', basePrice: 150, baseOutput: 0.5 },
+  fish: { name: '鱼类', icon: '🐟', terrain: 'coast', basePrice: 130, baseOutput: 0.5 },
 }
 
 export const RESOURCE_ORDER: ResourceType[] = ['wood', 'beef', 'oil', 'fish']
@@ -135,7 +141,7 @@ export const ZONES: ZoneDef[] = [
   {
     terrain: 'forest',
     range: [1, 17],
-    priceBase: 1500, priceStep: 80, rentRatio: 0.9,
+    priceBase: 1725, priceStep: 92, rentRatio: 0.55,
     specials: [
       { index: 5, type: 'fate' },
       { index: 10, type: 'chance' },
@@ -144,13 +150,13 @@ export const ZONES: ZoneDef[] = [
   {
     terrain: 'plateau',
     range: [19, 35],
-    priceBase: 1900, priceStep: 90, rentRatio: 0.9,
+    priceBase: 2185, priceStep: 104, rentRatio: 0.55,
     specials: [{ index: 24, type: 'fate' }],
   },
   {
     terrain: 'desert',
     range: [36, 52],
-    priceBase: 2300, priceStep: 100, rentRatio: 0.9,
+    priceBase: 2645, priceStep: 115, rentRatio: 0.55,
     specials: [
       { index: 36, type: 'chance' },
       { index: 40, type: 'fate' },
@@ -160,7 +166,7 @@ export const ZONES: ZoneDef[] = [
   {
     terrain: 'coast',
     range: [54, 71],
-    priceBase: 1700, priceStep: 60, rentRatio: 0.9,
+    priceBase: 1955, priceStep: 69, rentRatio: 0.55,
     specials: [
       { index: 54, type: 'auction' },
       { index: 59, type: 'chance' },
@@ -186,12 +192,13 @@ export const BRIDGES = {
 /** 修桥费用折扣：修桥 = 该级升级成本 × 此系数（核心/AI/UI 共用同一口径，见 economy.bridgeRepairCost） */
 export const BRIDGE_REPAIR_DISCOUNT = 0.5
 
-// 河流沿岸地块（洪水影响，文档 7.3）
-export const FLOOD_TILES: number[] = [14, 15, 19, 20, 47, 48, 50, 51]
+// 桥梁两侧地块（洪水只影响桥头两岸，文档 7.3）
+export const FLOOD_TILES: number[] = [17, 19, 52, 54]
 
 // ---------- 市场（文档 4.3 / 9） ----------
-export const MARKET_WALK = 0.08      // 每回合随机波动 ±8%
-export const MARKET_WALK_ENDGAME = 0.16
+export const MARKET_WALK = 0.04      // 每轮随机波动 ±4%（每轮只更新一次）
+export const MARKET_WALK_ENDGAME = 0.08
+export const MARKET_REVERT = 0.04    // 每轮向「基准价 × 季节/卡牌修正」回归 4%，防止价格钉死在夹逼边界
 export const PRICE_CLAMP_MIN = 0.5
 export const PRICE_CLAMP_MAX = 2.2
 export const BULK_SALE_THRESHOLD = 20  // 单笔 ≥20 单位当笔 -5%（简化供需）
@@ -242,21 +249,21 @@ export interface BuildingDef {
 }
 
 export const BUILDINGS: BuildingDef[] = [
-  // 资源生产（+50%/级，文档 8.1）
-  { id: 'lumber-mill', name: '伐木场', icon: '🪓', category: 'production', terrain: 'forest', cost: 500, outputMult: 0.5, desc: '木材产出每级 +50%' },
-  { id: 'pasture', name: '牧场', icon: '🐄', category: 'production', terrain: 'plateau', cost: 550, outputMult: 0.5, desc: '牛肉产出每级 +50%' },
-  { id: 'oil-well', name: '油井', icon: '🛢️', category: 'production', terrain: 'desert', cost: 650, outputMult: 0.5, desc: '石油产出每级 +50%' },
-  { id: 'fishing-port', name: '渔港', icon: '⚓', category: 'production', terrain: 'coast', cost: 600, outputMult: 0.5, desc: '鱼类产出每级 +50%' },
+  // 资源生产（+50%/级；基础产出 0.5，L3 合计 1.25 单位/回合）
+  { id: 'lumber-mill', name: '伐木场', icon: '🪓', category: 'production', terrain: 'forest', cost: 650, outputMult: 0.5, desc: '木材产出每级 +50%' },
+  { id: 'pasture', name: '牧场', icon: '🐄', category: 'production', terrain: 'plateau', cost: 720, outputMult: 0.5, desc: '牛肉产出每级 +50%' },
+  { id: 'oil-well', name: '油井', icon: '🛢️', category: 'production', terrain: 'desert', cost: 850, outputMult: 0.5, desc: '石油产出每级 +50%' },
+  { id: 'fishing-port', name: '渔港', icon: '⚓', category: 'production', terrain: 'coast', cost: 780, outputMult: 0.5, desc: '鱼类产出每级 +50%' },
   // 防灾
-  { id: 'firebreak', name: '防火带', icon: '🧯', category: 'protection', terrain: 'forest', protects: 'fire', cost: 500, desc: '免疫火灾' },
-  { id: 'greenhouse', name: '温室', icon: '🏠', category: 'protection', terrain: 'plateau', protects: 'snow', cost: 550, desc: '免疫雪灾' },
-  { id: 'sandbelt', name: '防沙林', icon: '🌳', category: 'protection', terrain: 'desert', protects: 'sandstorm', cost: 600, desc: '免疫沙尘暴' },
-  { id: 'breakwater', name: '防波堤', icon: '🧱', category: 'protection', terrain: 'coast', protects: 'typhoon', cost: 650, desc: '台风：收益不归零、建筑受损概率减半' },
-  { id: 'dam', name: '堤坝', icon: '🏗️', category: 'protection', protects: 'flood', cost: 600, desc: '免疫洪水（河流沿岸）' },
+  { id: 'firebreak', name: '防火带', icon: '🧯', category: 'protection', terrain: 'forest', protects: 'fire', cost: 650, desc: '免疫火灾' },
+  { id: 'greenhouse', name: '温室', icon: '🏠', category: 'protection', terrain: 'plateau', protects: 'snow', cost: 720, desc: '免疫雪灾' },
+  { id: 'sandbelt', name: '防沙林', icon: '🌳', category: 'protection', terrain: 'desert', protects: 'sandstorm', cost: 780, desc: '免疫沙尘暴' },
+  { id: 'breakwater', name: '防波堤', icon: '🧱', category: 'protection', terrain: 'coast', protects: 'typhoon', cost: 850, desc: '台风：收益不归零、建筑受损概率减半' },
+  { id: 'dam', name: '堤坝', icon: '🏗️', category: 'protection', protects: 'flood', cost: 780, desc: '免疫洪水（桥梁两侧）' },
   // 科技（每玩家限 1 座）
-  { id: 'weather-station', name: '气象站', icon: '📡', category: 'tech', cost: 1500, maxPerPlayer: 1, desc: '提前 1 回合显示台风路径' },
-  { id: 'automation', name: '自动化中心', icon: '🤖', category: 'tech', cost: 1800, maxPerPlayer: 1, desc: '所有资源产出 +25%' },
-  { id: 'drone-logistics', name: '无人机物流', icon: '🚁', category: 'tech', cost: 2000, maxPerPlayer: 1, desc: '收取租金 +10%，卖价 +10%' },
+  { id: 'weather-station', name: '气象站', icon: '📡', category: 'tech', cost: 1950, maxPerPlayer: 1, desc: '提前 1 回合显示台风路径' },
+  { id: 'automation', name: '自动化中心', icon: '🤖', category: 'tech', cost: 2340, maxPerPlayer: 1, desc: '所有资源产出 +25%' },
+  { id: 'drone-logistics', name: '无人机物流', icon: '🚁', category: 'tech', cost: 2600, maxPerPlayer: 1, desc: '收取租金 +10%，卖价 +10%' },
   // 商业/住宅（提升租金；系数经模拟调优：3 级封顶 ≈3.4 倍，避免一次过路费清空对手现金）
   { id: 'apartment', name: '公寓', icon: '🏢', category: 'commercial', cost: 900, rentMult: 0.45, desc: '本格租金每级 +45%' },
   { id: 'office', name: '写字楼', icon: '🏬', category: 'commercial', cost: 1200, rentMult: 0.6, desc: '本格租金每级 +60%' },
@@ -276,24 +283,41 @@ export const START_REPAIR_DISCOUNT = 0.8       // 停在起点 8 折
 // ---------- 台风（文档 7.1） ----------
 export const TYPHOON = {
   spawnProb: 0.1875,
-  maxCount: 1,
-  // 成长模型（文档 7.1）：生成时 0 级热带扰动，海上每回合概率 +1 级直至最强 5 级；
-  // 任何级别（≥1）都可能登陆，不一定成长到最强
+  // 成长模型：生成时 0 级热带扰动，海上每回合概率 +1 级直至最强 5 级；
+  // 提高增强概率与寿命，绝大多数台风在减弱前就会增强并登陆
   startStrength: 0,
   maxStrength: 5,
-  strengthenProb: 0.55,
-  minLife: 5,
-  maxLife: 7,
-  moveRange: [1, 2] as const,
-  turnProb: 0.4,          // 每回合概率改变移动方向——破坏地点不固定
-  landfallProb: [0, 0.2, 0.25, 0.3, 0.35, 0.45] as const,  // 按强度 0..5，级别越高越易登陆
-  maxLandTurns: 2,
+  strengthenProb: 0.78,
+  earlyWeakenProb: 0.025,   // 低强度时很小的提前减弱概率；大部分仍会增强
+  minLife: 10,
+  maxLife: 15,
+  // 自由海面移动：每回合约 80~108px；减弱期减速
+  moveDistance: [80, 108] as const,
+  weakenMoveDistance: [46, 66] as const,
+  // 航向每回合最多只转约 45°，不会出现瞬间掉头；近岸平行路径再缓慢内切
+  maxTurnPerRound: Math.PI / 4,
+  coastalTurn: Math.PI / 4,
+  turnJitter: 0.18,
+  // 路径随机性：生成时不要直奔登陆点；每回合有概率自由偏转，避免“一条直线”
+  initialTurnJitter: 0.85,
+  wanderProb: 0.38,
+  wanderTurn: 0.65,
+  coastalHoldAge: 5,
+  parallelProb: 0.10,
+  // 随机海洋生成：离最近海岸圆牌至少 220px，避免贴着岸边凭空出现
+  spawnMinDist: 220,
+  spawnMaxDist: 680,
+  spawnEdgeMargin: 90,
+  // 登陆判定与真实影响范围（世界像素；按强度 0..5）
+  landfallRadius: 64,
+  influenceRadius: [0, 100, 125, 150, 175, 205] as const,
+  predictRounds: 2,
   // 按强度 0..5 的建筑破坏概率：低级别也有破坏性，最强级别几乎必毁
   destroyProb: [0, 0.1, 0.2, 0.4, 0.65, 0.9] as const,
-  wideRangeAt: 4,         // ≥4 级登陆时波及 ±2 格，其余 ±1 格
-  neighborProbScale: 0.5, // 波及格破坏概率减半（「影响一点点」）
   eastBridgeDamageProb: 0.4,
-}
+  maxPathPoints: 120,
+} as const
+
 
 // ---------- 地震（文档 7.2 / 15） ----------
 export const QUAKE = {
@@ -301,15 +325,14 @@ export const QUAKE = {
   manyBuildingsProb: 0.12,
   manyBuildingsCount: 5,
   magnitudeWeights: [50, 35, 15] as const,           // 1/2/3 级
-  // 每级：对建筑 1/2/3 级建筑的破坏概率；桥梁破坏概率；租金影响 0/0.5/1
+  // 每级：对 1 级建筑的摧毁率、对 2 级建筑的降级率/摧毁率、对 3 级建筑的降级率；桥梁破坏概率；租金影响
   table: [
-    { destroy1: 0.3, degrade2: 0.2, degrade3: 0.1, bridge: 0.1, rentMult: 0 },
-    { destroy1: 0.5, degrade2: 0.35, degrade3: 0.2, bridge: 0.3, rentMult: 0.5 },
-    { destroy1: 0.8, degrade2: 0.5, degrade3: 0.3, bridge: 0.5, rentMult: 1 },
+    { destroy1: 0.3, destroy2: 0, degrade2: 0.2, degrade3: 0.1, bridge: 0.1, rentMult: 0 },
+    { destroy1: 0.5, destroy2: 0, degrade2: 0.35, degrade3: 0.2, bridge: 0.3, rentMult: 0.5 },
+    { destroy1: 0.8, destroy2: 0.25, degrade2: 0.5, degrade3: 0.3, bridge: 0.5, rentMult: 1 },
   ] as const,
 }
 
-// ---------- 反垄断（文档 9.3） ----------
 // ---------- 反垄断（文档 9.3，玩家主动举报制） ----------
 export const ANTITRUST = {
   terrainRatio: 0.7,        // 垄断线：单类地形占比 ≥70%
@@ -325,14 +348,6 @@ export const ANTITRUST = {
   cooldownRounds: 2,        // 举报失败后同一目标 2 轮内不可再被举报
   outcomes: ['fine', 'auction', 'output'] as const,
 }
-
-// ---------- 囚徒困境（文档 9.4） ----------
-export const DILEMMA_EVERY = 5
-export const DILEMMA_PAYOFFS = {
-  CC: [3000, 3000],
-  DC: [4500, -1500],   // 背叛者 / 合作者
-  DD: [-800, -800],
-} as const
 
 // ---------- 终局（文档 2.3） ----------
 export const ENDGAME = {

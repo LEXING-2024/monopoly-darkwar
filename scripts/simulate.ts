@@ -5,10 +5,12 @@ import { Game } from '../src/core/game'
 import type { AiDifficulty } from '../src/core/types'
 
 const GAMES = Number(process.argv[2] ?? 100)
-// 用法：npm run sim [局数] [难度 casual|normal|hard|expert] [--gate 最低平均回合]
+// 用法：npm run sim [局数] [难度 easy|normal|hard|hell] [--gate 最低中位回合] [--players N]
 const DIFFICULTY = (process.argv[3] ?? 'normal') as AiDifficulty
 const gateIdx = process.argv.indexOf('--gate')
 const GATE_MIN = gateIdx >= 0 ? Number(process.argv[gateIdx + 1] ?? 0) : 0
+const playersIdx = process.argv.indexOf('--players')
+const FIXED_COUNT = playersIdx >= 0 ? Number(process.argv[playersIdx + 1] ?? 0) : 0
 
 interface MoneyFlow {
   earned: number; spent: number; rentCollected: number; rentPaid: number
@@ -16,7 +18,11 @@ interface MoneyFlow {
   tileSpent: number; buildSpent: number
 }
 
-async function runOne(seed: number, count: number): Promise<{ turns: number; winner: number; error: string | null; bankrupt: number; monopolyWin: boolean; firstBankrupt: number | null; flow: MoneyFlow | null }> {
+async function runOne(seed: number, count: number): Promise<{
+  turns: number; winner: number; error: string | null; bankrupt: number;
+  endReason: 'last-standing' | 'monopoly' | 'timeout' | null;
+  alive: number; playerCount: number; firstBankrupt: number | null; flow: MoneyFlow | null
+}> {
   const game = new Game()
   game.muted = true
   const names = ['阿尔法', '贝塔', '伽马', '德尔塔', '艾普西隆', '泽塔', '伊塔', '西塔']
@@ -40,13 +46,20 @@ async function runOne(seed: number, count: number): Promise<{ turns: number; win
     return {
       turns: s.turn, winner: s.winner ?? -1, error: null,
       bankrupt: s.bankruptOrder.length,
-      // 垄断判决胜利：结束时仍有 ≥2 人存活
-      monopolyWin: s.winner !== null && s.players.length - s.bankruptOrder.length > 1,
+      endReason: s.endReason ?? null,
+      alive: s.players.filter(p => p.alive).length,
+      playerCount: s.players.length,
       firstBankrupt: s.firstBankruptTurn,
       flow,
     }
   } catch (e) {
-    return { turns: game.state?.turn ?? 0, winner: -2, error: String(e), bankrupt: game.state?.bankruptOrder.length ?? 0, monopolyWin: false, firstBankrupt: game.state?.firstBankruptTurn ?? null, flow: null }
+    return {
+      turns: game.state?.turn ?? 0, winner: -2, error: String(e),
+      bankrupt: game.state?.bankruptOrder.length ?? 0, endReason: null,
+      alive: game.state?.players.filter(p => p.alive).length ?? 0,
+      playerCount: game.state?.players.length ?? count,
+      firstBankrupt: game.state?.firstBankruptTurn ?? null, flow: null,
+    }
   }
 }
 
@@ -55,10 +68,16 @@ async function main() {
   let ok = 0
   let failed = 0
   let monopolyWins = 0
+  let timeouts = 0
+  let lastStandingWins = 0
   const turnCounts: number[] = []
   const firstBankrupts: number[] = []
   const winners = new Map<string, number>()
   const bankruptDist = new Map<number, number>()
+  // 按人数分组的终局质量（4/8 人局节奏差异很大，必须分开看）
+  const byCount = new Map<number, {
+    turns: number[]; lastStanding: number; monopoly: number; timeout: number; aliveAtTimeout: number[]
+  }>()
   // 金钱流向汇总（跨全部对局累计）
   const money = {
     earned: 0, spent: 0,
@@ -78,14 +97,26 @@ async function main() {
   async function worker() {
     while (next < GAMES) {
       const i = next++
-      const r = await runOne(i * 7919 + 13, i % 2 === 0 ? 4 : 8)
+      const count = FIXED_COUNT > 0 ? FIXED_COUNT : (i % 2 === 0 ? 4 : 8)
+      const r = await runOne(i * 7919 + 13, count)
       if (r.error) {
         failed++
         console.log(`局 ${i + 1}: ❌ 异常 → ${r.error}`)
       } else {
         ok++
         turnCounts.push(r.turns)
-        if (r.monopolyWin) monopolyWins++
+        if (r.endReason === 'monopoly') monopolyWins++
+        else if (r.endReason === 'timeout') timeouts++
+        else if (r.endReason === 'last-standing') lastStandingWins++
+        let bc = byCount.get(r.playerCount)
+        if (!bc) {
+          bc = { turns: [], lastStanding: 0, monopoly: 0, timeout: 0, aliveAtTimeout: [] }
+          byCount.set(r.playerCount, bc)
+        }
+        bc.turns.push(r.turns)
+        if (r.endReason === 'last-standing') bc.lastStanding++
+        else if (r.endReason === 'monopoly') bc.monopoly++
+        else if (r.endReason === 'timeout') { bc.timeout++; bc.aliveAtTimeout.push(r.alive) }
         if (r.firstBankrupt !== null) firstBankrupts.push(r.firstBankrupt)
         winners.set(String(r.winner), (winners.get(String(r.winner)) ?? 0) + 1)
         bankruptDist.set(r.bankrupt, (bankruptDist.get(r.bankrupt) ?? 0) + 1)
@@ -105,8 +136,11 @@ async function main() {
   const avg = turnCounts.reduce((a, b) => a + b, 0) / Math.max(1, turnCounts.length)
   const sorted = [...turnCounts].sort((a, b) => a - b)
   const pct = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))]
+  // 用 reduce 替代 Math.min(...arr) 防止大数组栈溢出（GAMES 上万时安全）
+  const minTurns = turnCounts.reduce((a, b) => Math.min(a, b), Infinity)
+  const maxTurns = turnCounts.reduce((a, b) => Math.max(a, b), -Infinity)
   console.log(`\n完成：${ok}/${GAMES} 局正常结束，${failed} 局异常`)
-  console.log(`平均回合数：${avg.toFixed(0)}（最少 ${Math.min(...turnCounts)}，最多 ${Math.max(...turnCounts)}），中位数 ${pct(0.5).toFixed(0)}（P25 ${pct(0.25).toFixed(0)} / P75 ${pct(0.75).toFixed(0)}）`)
+  console.log(`平均回合数：${avg.toFixed(0)}（最少 ${minTurns}，最多 ${maxTurns}），中位数 ${pct(0.5).toFixed(0)}（P25 ${pct(0.25).toFixed(0)} / P75 ${pct(0.75).toFixed(0)}）`)
   if (firstBankrupts.length) {
     const fb = [...firstBankrupts].sort((a, b) => a - b)
     const fbAvg = firstBankrupts.reduce((a, b) => a + b, 0) / firstBankrupts.length
@@ -116,7 +150,15 @@ async function main() {
   } else {
     console.log('最早破产回合：无（所有对局无人破产）')
   }
-  console.log(`垄断判决胜利：${monopolyWins} 局（${(monopolyWins / Math.max(1, ok) * 100).toFixed(1)}%）`)
+  console.log(`终局原因：淘汰至最后一人 ${lastStandingWins} 局 · 垄断判决 ${monopolyWins} 局（${(monopolyWins / Math.max(1, ok) * 100).toFixed(1)}%）· 行动上限 ${timeouts} 局（${(timeouts / Math.max(1, ok) * 100).toFixed(1)}%）`)
+  for (const [n, bc] of [...byCount.entries()].sort((a, b) => a[0] - b[0])) {
+    const ts = [...bc.turns].sort((a, b) => a - b)
+    const med = ts[Math.min(ts.length - 1, Math.floor(ts.length * 0.5))]
+    const avgAlive = bc.aliveAtTimeout.length
+      ? (bc.aliveAtTimeout.reduce((a, b) => a + b, 0) / bc.aliveAtTimeout.length).toFixed(1)
+      : '—'
+    console.log(`  ${n} 人局：中位 ${med} · 淘汰 ${bc.lastStanding} / 垄断 ${bc.monopoly} / 超时 ${bc.timeout}（超时平均仍存活 ${avgAlive} 人）`)
+  }
   console.log(`胜者分布：${[...winners.entries()].map(([k, v]) => `${k} 号 ${v} 局`).join('，')}`)
   console.log(`破产人数分布：${[...bankruptDist.entries()].map(([k, v]) => `${k} 人破产 ${v} 局`).join('，')}`)
   // 金钱流向构成（全部对局累计）

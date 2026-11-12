@@ -13,7 +13,7 @@ const isResource = computed(() => props.prompt.type === 'choose-resource')
 </script>
 
 <template>
-  <BaseModal width="min(400px, 92vw)" scroll>
+  <BaseModal width="md" scroll>
       <div class="modal-title">{{ prompt.title }}</div>
       <div class="modal-body">
         <p class="big">{{ prompt.desc }}</p>

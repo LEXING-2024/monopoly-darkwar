@@ -10,7 +10,7 @@ const player = computed(() => store.state?.players[props.prompt.player] ?? null)
 </script>
 
 <template>
-  <BaseModal width="min(360px, 92vw)">
+  <BaseModal width="sm">
     <div :class="isFate ? 'fate' : 'chance'">
       <div class="card-top">
         <span class="card-tag">{{ isFate ? '⏳ 命运卡' : '🎁 机会卡' }}</span>

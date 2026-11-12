@@ -12,13 +12,20 @@ const ranking = computed(() => {
     (a, b) => totalValue(store.game!, b.id) - totalValue(store.game!, a.id),
   )
 })
+const endText = computed(() => {
+  switch (s.value?.endReason) {
+    case 'timeout': return '行动数达到上限，按总资产判定胜负'
+    case 'monopoly': return '垄断判决：集齐整类资源地块，直接获胜'
+    default: return '淘汰了所有对手，成为唯一的幸存者'
+  }
+})
 </script>
 
 <template>
-  <BaseModal width="min(430px, 92vw)" :dim="0.78" :z="160" padding="26px" v-if="winner">
+  <BaseModal width="lg" :dim="0.78" :z="160" padding="26px" v-if="winner">
       <div class="trophy">🏆</div>
       <div class="winner-name" :style="{ color: winner.color }">{{ winner.name }} 获胜！</div>
-      <div class="muted">垄断了整个沙盘，成为唯一的幸存者</div>
+      <div class="muted">{{ endText }}</div>
 
       <div class="rank-list">
         <div

@@ -12,7 +12,7 @@ export type SfxName =
   | 'click' | 'coin' | 'ding' | 'tick' | 'card' | 'disaster'
   | 'quake' | 'thunder' | 'fire' | 'win' | 'lose' | 'move' | 'build'
   | 'rent' | 'gavel' | 'dice' | 'wind' | 'snow' | 'sand' | 'flood'
-  | 'dilemma' | 'season' | 'report' | 'chain' | 'dig'
+  | 'season' | 'report' | 'chain' | 'dig'
 
 export interface TilePos { x: number; y: number; angle: number }
 
@@ -74,7 +74,6 @@ export interface Player {
   resources: Record<ResourceType, number>
   status: PlayerStatus
   traits: { aggression: number; greed: number }
-  dilemmaMem: Record<number, Array<'C' | 'D'>>
   stats: {
     earned: number
     spent: number
@@ -84,7 +83,7 @@ export interface Player {
     // 金钱流向明细（经济平衡观测用）
     resourceIncome: number   // 卖资源所得（含破产变卖）
     startBonus: number       // 起点奖励（经过起点 + 季节修正）
-    bankIn: number           // 银行发放（卡牌/奖金/补贴/困境收益等）
+    bankIn: number           // 银行发放（卡牌/奖金/补贴等）
     bankOut: number          // 支付给银行（罚款/游说/卡牌费等）
     tileSpent: number        // 买地支出（含桥）
     buildSpent: number       // 建造/升级/修理/修桥支出
@@ -111,7 +110,7 @@ export interface AiProfile {
 }
 
 export interface AiMemoryEntry {
-  kind: 'betray' | 'report' | 'cooperate'
+  kind: 'report'
   from: number            // 对方玩家 id
   turn: number            // 发生时的行动计数
 }
@@ -126,7 +125,6 @@ export interface OpponentModel {
   monopolyRush: boolean   // 意图：冲刺垄断（某地形占比高）
   desperate: boolean      // 意图：急需现金（现金低且收入高）
   tradeCount: number
-  betrayals: number       // 对我背叛次数
   reportsAgainstMe: number
   threat: number          // 威胁值
 }
@@ -146,15 +144,30 @@ export interface AiBrain {
 
 export interface TyphoonState {
   strength: 0 | 1 | 2 | 3 | 4 | 5   // 0 级=热带扰动（生成初始），海上逐步增强
-  seaIndex: number
-  dir: 1 | -1
+  /** 台风中心的真实世界坐标：在海洋区域内自由移动，不再绑定固定航点 */
+  x: number
+  y: number
+  /** 当前航向（弧度，屏幕坐标：0=东，π/2=南） */
+  heading: number
+  /** 本次台风的目标登陆地块；朝它缓慢转向 */
+  targetTile: number
+  /** 是否尝试与海岸线平行移动（仍会缓慢内切，最终大概率登陆） */
+  coastal: boolean
   age: number
   maxLife: number
   onLand: boolean
   landTile: number | null
   landTurns: number
-  predicted: number | null   // 气象站预测的下一个位置（近海航点索引）
+  /** 气象站预测点（世界坐标） */
+  predictedX: number | null
+  predictedY: number | null
   damagedBuildings: boolean  // 是否造成过建筑损坏（灾后重建事件链）
+  /** 实际走过的轨迹（世界坐标，生成点开始；登陆时补上登陆点） */
+  path: { x: number; y: number }[]
+  /** 已进入减弱阶段：不再增强、不再登陆，每回合下降 1 级 */
+  weakening: boolean
+  /** 已降到 0 级热带低压：本回合残留显示，下一回合正式消散 */
+  fading: boolean
 }
 
 export interface QuakeState {
@@ -223,7 +236,7 @@ export interface GameState {
   players: Player[]
   tiles: Tile[]
   market: Record<ResourceType, number>
-  rentMods: OutputMod[]        // 全局租金修正（卡牌/终局 ×1.5）
+  rentMods: OutputMod[]        // 全局租金修正（卡牌/事件链；终局 ×1.5 由 endgame 标记单独施加）
   bridgeTollMods: OutputMod[]  // 桥梁过路费修正
   repairMods: OutputMod[]      // 修理费用修正
   outputModAll: OutputMod[]    // 全体产出修正
@@ -236,12 +249,15 @@ export interface GameState {
   quake: QuakeState | null
   chains: ChainState[]
   endgame: boolean             // 存活 ≤2 人终局规则
-  roundsNoBankruptcy: number   // 终局连续无人破产回合
+  roundsNoBankruptcy: number   // 终局连续无人破产轮数
   firstBankruptTurn: number | null   // 首个玩家破产时的行动计数（模拟观察节奏用）
   winner: number | null
+  /** 终局原因：淘汰至最后一人 / 垄断判决 / 行动数上限按资产判定 */
+  endReason: 'last-standing' | 'monopoly' | 'timeout' | null
   bankruptOrder: number[]
   log: LogEntry[]
-  casinoBet: CasinoBet | null
+  /** 待结算的赌场下注：每位玩家在自己下一次转盘后结算（多人先后下注不会互相覆盖） */
+  casinoBets: CasinoBet[]
   speculation: Speculation[]
   seasonEvent: { name: string; desc: string } | null
   deckLeft: { fate: number; chance: number }
@@ -280,7 +296,6 @@ export type Prompt =
   | { type: 'casino'; player: number; cash: number }
   | { type: 'bridge-cross'; player: number; bridge: number; toll: number }
   | { type: 'bid'; title: string; tile: number; currentBid: number; currentBidder: number | null; minBid: number; myCash: number; canPass: boolean; player: number }
-  | { type: 'dilemma'; player: number; other: string }
   | { type: 'trade-offer'; from: number; to: number; give: TradeOffer; receive: TradeOffer }
   | { type: 'trade-response'; from: number; to: number; give: TradeOffer; receive: TradeOffer }
   | { type: 'pay-or-lose'; title: string; desc: string; cost: number; loseDesc: string; player: number }

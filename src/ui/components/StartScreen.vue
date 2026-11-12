@@ -2,6 +2,7 @@
 import { reactive, ref } from 'vue'
 import { hasSave, loadGame, startGame, store, setSpeed } from '../store'
 import { AI_DIFFICULTY, AI_DIFFICULTY_ORDER } from '../../core/config'
+import Icon from './Icon.vue'
 
 const emit = defineEmits<{ (e: 'show-help'): void }>()
 
@@ -71,10 +72,12 @@ function resume(): void {
         <g stroke="#5d421f" stroke-width="1.2" opacity="0.62" stroke-linejoin="round">
           <circle cx="452" cy="100" r="28" fill="none" />
           <circle cx="452" cy="100" r="23" fill="none" opacity="0.75" />
-          <path d="M452,66 L460,100 L452,134 L444,100 Z" fill="#5d421f" fill-opacity="0.5" />
-          <path d="M426,100 L452,92 L478,100 L452,108 Z" fill="#5d421f" fill-opacity="0.3" />
-          <path d="M443,91 L452,100 L461,109 L452,118 Z" fill="none" opacity="0.8" />
-          <path d="M461,91 L452,100 L443,109 L452,82 Z" fill="none" opacity="0.8" />
+          <g class="compass-needle">
+            <path d="M452,66 L460,100 L452,134 L444,100 Z" fill="#5d421f" fill-opacity="0.5" />
+            <path d="M426,100 L452,92 L478,100 L452,108 Z" fill="#5d421f" fill-opacity="0.3" />
+            <path d="M443,91 L452,100 L461,109 L452,118 Z" fill="none" opacity="0.8" />
+            <path d="M461,91 L452,100 L443,109 L452,82 Z" fill="none" opacity="0.8" />
+          </g>
           <path d="M452,66 L452,60 M452,134 L452,140 M426,100 L420,100 M478,100 L484,100" stroke-width="0.9" />
           <!-- 刻度环 -->
           <g stroke-width="0.7" opacity="0.6">
@@ -288,7 +291,17 @@ function resume(): void {
       <span class="orn orn-br">✦</span>
 
       <header class="paper-head">
-        <div class="emblem" title="大富翁·暗战">🎩</div>
+        <div class="emblem" title="大富翁·暗战" aria-hidden="true">
+          <svg viewBox="0 0 56 48" class="hat">
+            <ellipse cx="28" cy="41" rx="18" ry="4.2" fill="rgba(74,45,18,0.20)" />
+            <path d="M15 18c0-3 2-5 5-5h16c3 0 5 2 5 5l-2 4H17z" fill="#2c1a0c" />
+            <path d="M13 22h30c3 0 6 2.4 6 5.2S46 33 43 33H13c-3 0-6-2.4-6-5.8S10 22 13 22z" fill="#3a2410" />
+            <path d="M14 23h28c2 0 4 1.4 4 3.4S44 30 42 30H14c-2 0-4-1.6-4-3.6S12 23 14 23z" fill="#4a3018" />
+            <path d="M17 17.5h22l-1.4 3H18.4z" fill="#c9a24a" />
+            <path d="M13.5 24.5h29" stroke="#c9a24a" stroke-width="1.1" stroke-linecap="round" opacity=".85" />
+            <path d="M18 33h4l-1 8h-2zM34 33h4l-1 8h-2z" fill="#2c1a0c" opacity=".55" />
+          </svg>
+        </div>
         <div class="cartouche">
           <h1 class="title">
             <span class="ch c0">大</span><span class="ch c1">富</span><span class="ch c2">翁</span>
@@ -303,12 +316,14 @@ function resume(): void {
       <div class="flourish">─ ❦ ─</div>
 
       <div class="player-count">
-        <span class="label">❖ 玩家数量</span>
-        <button
-          v-for="n in [2, 3, 4, 5, 6, 7, 8]" :key="n"
-          class="btn small count-btn" :class="{ active: count.value === n }"
-          @click="count.value = n"
-        >{{ n }} 人</button>
+        <span class="label"><Icon name="users" :size="13" /> 玩家数量</span>
+        <div class="count-row">
+          <button
+            v-for="n in [4, 5, 6, 7, 8]" :key="n"
+            class="btn small count-btn" :class="{ active: count.value === n }"
+            @click="count.value = n"
+          >{{ n }} 人</button>
+        </div>
       </div>
 
       <div class="setup-list">
@@ -320,7 +335,7 @@ function resume(): void {
       </div>
 
       <div class="options-row">
-        <span class="label">❖ AI 难度</span>
+        <span class="label"><Icon name="gear" :size="13" /> AI 难度</span>
         <button
           v-for="d in AI_DIFFICULTY_ORDER" :key="d"
           class="btn small" :class="{ active: difficulty.value === d }"
@@ -329,7 +344,7 @@ function resume(): void {
       </div>
 
       <div class="options-row">
-        <span class="label">❖ 动画速度</span>
+        <span class="label"><Icon name="hourglass" :size="13" /> 动画速度</span>
         <button
           v-for="s in [['slow', '慢'], ['normal', '正常'], ['fast', '快']] as const" :key="s[0]"
           class="btn small" :class="{ active: store.speed === s[0] }"
@@ -337,8 +352,11 @@ function resume(): void {
         >{{ s[1] }}</button>
       </div>
 
-      <button v-if="saved" class="btn resume-btn" @click="resume">📜 继续上次对局</button>
-      <button class="btn begin-btn" @click="begin">开 始 游 戏</button>
+      <button v-if="saved" class="btn resume-btn" @click="resume"><Icon name="scroll" :size="15" /> 继续上次对局</button>
+      <button class="btn primary begin-btn" @click="begin">开 始 游 戏</button>
+
+      <!-- 烛光里的浮尘（轻量装饰，6 个元素） -->
+      <span v-for="n in 6" :key="'dust' + n" class="dust" :class="'dust-' + n" aria-hidden="true" />
 
       <!-- 火漆印章（左上角） -->
       <div class="wax-seal" title="以富甲天下">富</div>
@@ -355,34 +373,24 @@ function resume(): void {
   position: relative;
   min-height: 100vh;
   display: flex;
-  align-items: flex-start;   /* 配合 .parchment margin:auto 居中；内容超高（2~8 人）时可滚动 */
+  align-items: flex-start;   /* 配合 .parchment margin:auto 居中；内容超高（4~8 人）时可滚动 */
   justify-content: center;
   padding: 26px;
   overflow-x: hidden;
   overflow-y: auto;
+  background-color: var(--wood-3);
   background-image:
     /* 四角暗角 */
-    radial-gradient(ellipse 92% 72% at 50% 46%, transparent 52%, rgba(0, 0, 0, 0.6) 100%),
+    radial-gradient(ellipse 96% 78% at 50% 46%, transparent 44%, rgba(0, 0, 0, 0.66) 100%),
     /* 烛光（桌面中央偏上被照亮） */
-    radial-gradient(ellipse 60% 46% at 50% 36%, rgba(255, 198, 120, 0.22), transparent 68%),
+    radial-gradient(ellipse 56% 42% at 50% 34%, rgba(255, 198, 120, 0.20), transparent 70%),
     /* 斜向光泽 */
-    linear-gradient(115deg, rgba(255, 236, 190, 0.09) 0%, transparent 32%),
-    /* 木纹（SVG 横向拉长噪点，模拟年轮细丝） */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='420' height='420'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.011 0.17' numOctaves='4' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.32' intercept='0.04'/%3E%3CfeFuncG type='linear' slope='0.32' intercept='0.04'/%3E%3CfeFuncB type='linear' slope='0.32' intercept='0.04'/%3E%3CfeFuncA type='linear' slope='0.17'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='420' height='420' filter='url(%23w)'/%3E%3C/svg%3E"),
-    /* 木板明暗交替 */
-    repeating-linear-gradient(0deg,
-      rgba(255, 235, 190, 0.045) 0 2px, transparent 2px 90px),
-    /* 板缝高光（下边缘） */
-    repeating-linear-gradient(0deg,
-      transparent 0 88px, rgba(255, 224, 168, 0.13) 88px 90px),
-    /* 板缝深线 */
-    repeating-linear-gradient(0deg,
-      transparent 0 90px, rgba(18, 7, 0, 0.62) 90px 93px),
-    /* 竖直拼接缝 */
-    repeating-linear-gradient(90deg,
-      transparent 0 138px, rgba(18, 7, 0, 0.45) 138px 140px),
-    /* 桌面底色与顶部光照 */
-    linear-gradient(180deg, #5f3e1e 0%, #4c2f15 46%, #37220e 100%);
+    linear-gradient(115deg, rgba(255, 236, 190, 0.08) 0%, transparent 34%),
+    /* 桌面明暗 */
+    linear-gradient(180deg, rgba(92, 58, 26, 0.18), rgba(28, 15, 5, 0.44)),
+    /* 木纹 */
+    var(--tex-wood);
+  background-size: auto, auto, auto, auto, 900px 900px;
 }
 
 /* 羊皮纸在桌面上投下的椭圆阴影 */
@@ -412,11 +420,8 @@ function resume(): void {
   transform: rotate(-0.4deg);
   border-radius: 4px 18px 5px 14px / 14px 5px 17px 4px;
   border: 2px solid #7a5a2e;
+  background-color: var(--paper-1);
   background-image:
-    /* 污渍线条（横向拉伸墨痕/水渍） */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='300'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.11' numOctaves='4' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncA type='linear' slope='0.13'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='500' height='300' filter='url(%23s)'/%3E%3C/svg%3E"),
-    /* 米花卡纸颗粒 */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncG type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncB type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncA type='linear' slope='0.12'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23m)'/%3E%3C/svg%3E"),
     /* 轻微磨损（被摩挲掉的亮斑） */
     radial-gradient(ellipse 130px 76px at 8% 30%, rgba(255, 250, 232, 0.30), transparent 70%),
     radial-gradient(ellipse 160px 96px at 92% 58%, rgba(255, 248, 226, 0.24), transparent 70%),
@@ -424,11 +429,13 @@ function resume(): void {
     /* 岁月污渍 */
     radial-gradient(ellipse 140px 100px at 12% 18%, rgba(146, 96, 34, 0.16), transparent 72%),
     radial-gradient(ellipse 170px 120px at 88% 76%, rgba(116, 72, 18, 0.14), transparent 72%),
-    radial-gradient(ellipse 100px 76px at 70% 8%, rgba(150, 104, 38, 0.10), transparent 72%),
     /* 边缘老化 */
     radial-gradient(ellipse 80% 70% at 50% 45%, transparent 58%, rgba(122, 82, 30, 0.30) 100%),
+    /* 纸纹 */
+    var(--tex-paper),
     /* 泛黄底色 */
-    linear-gradient(168deg, #f4e5ba 0%, #eed8a4 42%, #e6ca8e 100%);
+    linear-gradient(168deg, #fbf0d2 0%, #f0dcaa 42%, #e5c98f 100%);
+  background-size: auto, auto, auto, auto, auto, auto, 420px 420px, auto;
   box-shadow:
     inset 0 0 64px rgba(94, 58, 14, 0.38),
     inset 0 0 14px rgba(94, 58, 14, 0.32),
@@ -447,7 +454,7 @@ function resume(): void {
   border-radius: 4px 18px 5px 14px / 14px 5px 17px 4px;
   overflow: hidden;
 }
-.parchment > :not(.map-art):not(.frame-line):not(.orn):not(.wax-seal) {
+.parchment > :not(.map-art):not(.frame-line):not(.orn):not(.wax-seal):not(.dust) {
   position: relative;
   z-index: 1;
 }
@@ -478,12 +485,14 @@ function resume(): void {
 
 /* ---------- 标题（手绘墨迹风） ---------- */
 .emblem {
-  font-size: 44px;
-  display: inline-block;
-  transform: rotate(-7deg);
-  filter: drop-shadow(2px 3px 3px rgba(70, 40, 0, 0.4));
-  margin-bottom: 2px;
+  display: block;
+  width: 54px;
+  height: 46px;
+  margin: 0 auto 2px;
+  transform: rotate(-6deg);
+  filter: drop-shadow(2px 3px 3px rgba(70, 40, 0, 0.35));
 }
+.hat { width: 100%; height: 100%; }
 .cartouche {
   position: relative;
   display: inline-block;
@@ -568,30 +577,36 @@ function resume(): void {
 }
 
 /* ---------- 表单 ---------- */
-.player-count { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 10px 0; flex-wrap: wrap; }
-.count-btn { padding: 5px 11px; font-size: 13px; }
-.label { font-size: 13px; color: #63461f; letter-spacing: 1px; }
+.player-count {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 5px; margin: 12px 0 6px;
+}
+.count-row { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
+.count-btn { padding: 4px 10px; font-size: 12.5px; }
+.label {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12.5px; color: #63461f; letter-spacing: 1px;
+}
+.label :deep(.ui-icon) { color: var(--brass-3); }
 .setup-list { display: flex; flex-direction: column; gap: 9px; margin: 8px auto 16px; max-width: 380px; }
-.setup-row { display: flex; align-items: center; gap: 10px; }
+.setup-row { display: flex; align-items: center; gap: 10px; position: relative; }
 .role-tag {
-  font-size: 12px; padding: 3px 10px; border-radius: 10px;
-  background: rgba(120, 90, 40, 0.18); border: 1px solid #b99a6a; color: #6a4a18;
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10.5px;
+  line-height: 1.45;
+  padding: 1px 7px;
+  border-radius: 7px;
+  background: rgba(120, 90, 40, 0.12);
+  border: 1px solid rgba(153, 122, 74, 0.7);
+  color: #6a4a18;
+  pointer-events: none;
 }
 .role-tag.human { background: rgba(255, 215, 106, 0.3); border-color: #c9a227; font-weight: bold; }
 .resume-btn {
-  width: 78%; margin-bottom: 12px; font-size: 16px; padding: 11px; letter-spacing: 3px;
-  color: #f2e2bc; text-shadow: 0 1px 2px rgba(30, 15, 0, 0.6);
-  border: 2px solid #46300e; border-radius: 10px;
-  background-image:
-    radial-gradient(ellipse 60% 42% at 22% 6%, rgba(255, 236, 190, 0.35), transparent 72%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015 0.26' numOctaves='3' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncG type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncB type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncA type='linear' slope='0.38'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='120' filter='url(%23w)'/%3E%3C/svg%3E"),
-    var(--wear, var(--wear-3)),
-    linear-gradient(180deg, #8a7148 0%, #6a5433 55%, #4f3c22 100%);
-  box-shadow:
-    inset 0 1px 1px rgba(255, 232, 180, 0.5),
-    inset 0 -2px 4px rgba(40, 20, 0, 0.55),
-    0 2px 0 #37230a,
-    0 4px 7px rgba(0, 0, 0, 0.42);
+  width: 78%; margin-bottom: 10px; font-size: 15.5px; padding: 10px; letter-spacing: 3px;
 }
 .resume-btn:hover { filter: brightness(1.12); }
 .shape-dot {
@@ -606,75 +621,33 @@ function resume(): void {
 .shape-plus { clip-path: polygon(35% 0, 65% 0, 65% 35%, 100% 35%, 100% 65%, 65% 65%, 65% 100%, 35% 100%, 35% 65%, 0 65%, 0 35%, 35% 35%); border-radius: 0; }
 .shape-heart { clip-path: polygon(50% 90%, 8% 50%, 0 28%, 16% 8%, 38% 8%, 50% 24%, 62% 8%, 84% 8%, 100% 28%, 92% 50%); border-radius: 0; }
 
-/* 小按钮：做旧木块（浓木纹 + 木节 + 划痕磨损 + 统一圆角） */
-.btn.small {
-  color: #f2e2bc;
-  text-shadow: 0 1px 2px rgba(30, 15, 0, 0.6);
-  border-color: #46300e;
-  border-radius: 8px;
-  background-image:
-    /* 木节（暗色结疤+高光） */
-    radial-gradient(ellipse 10px 8px at 84% 70%, rgba(55, 26, 4, 0.6), transparent 75%),
-    radial-gradient(ellipse 5px 4px at 84% 70%, rgba(255, 232, 180, 0.3), transparent 75%),
-    /* 边角磨损高光 */
-    radial-gradient(ellipse 60% 42% at 22% 6%, rgba(255, 236, 190, 0.4), transparent 72%),
-    radial-gradient(ellipse 44% 34% at 94% 98%, rgba(255, 238, 200, 0.18), transparent 72%),
-    /* 木纹 */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015 0.26' numOctaves='3' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncG type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncB type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncA type='linear' slope='0.38'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='120' filter='url(%23w)'/%3E%3C/svg%3E"),
-    /* 独有磨损（污渍斑+划痕，各按钮略有不同） */
-    var(--wear, var(--wear-1)),
-    /* 板缝 */
-    linear-gradient(180deg, transparent 0 56%, rgba(28, 12, 0, 0.4) 56% 59%, transparent 59%),
-    /* 木底色 */
-    linear-gradient(180deg, #b08848 0%, #8a6330 55%, #68461c 100%);
-  box-shadow:
-    inset 0 1px 1px rgba(255, 232, 180, 0.55),
-    inset 0 -2px 4px rgba(40, 20, 0, 0.55),
-    inset 2px 0 3px rgba(255, 232, 180, 0.16),
-    inset -2px 0 4px rgba(40, 20, 0, 0.3),
-    0 2px 0 #37230a,
-    0 4px 7px rgba(0, 0, 0, 0.42);
-}
-.btn.small:nth-child(odd) { transform: rotate(-0.6deg); --wear: var(--wear-2); }
-.btn.small:nth-child(even) { transform: rotate(0.5deg); --wear: var(--wear-3); }
-/* 玩家行里的 AI/人类 按钮按行交替磨损 */
-.setup-row:nth-child(even) .btn.small { --wear: var(--wear-4); }
-.setup-row:nth-child(3n) .btn.small { --wear: var(--wear-3); }
-.btn.small:hover { filter: brightness(1.12); }
-.btn.small.active {
-  color: #fff3d0;
-  background-image:
-    radial-gradient(ellipse 10px 8px at 84% 70%, rgba(55, 26, 4, 0.5), transparent 75%),
-    radial-gradient(ellipse 60% 42% at 22% 6%, rgba(255, 244, 200, 0.45), transparent 72%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015 0.26' numOctaves='3' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncG type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncB type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncA type='linear' slope='0.38'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='120' filter='url(%23w)'/%3E%3C/svg%3E"),
-    var(--wear, var(--wear-1)),
-    linear-gradient(180deg, #d9a63c 0%, #a5711f 60%, #7d5210 100%);
-  box-shadow:
-    inset 0 2px 6px rgba(60, 35, 5, 0.6),
-    inset 0 -1px 2px rgba(255, 236, 190, 0.35),
-    0 1px 0 #46300e;
-}
+/* 小按钮沿用全局 .btn 木牌样式，仅保留尺寸 */
+.btn.small { border-radius: 8px; }
 
-/* 输入框：做旧羊皮纸（米花纹理 + 磨损 + 内凹） */
+/* 输入框：羊皮纸内凹 */
 .name-input {
   flex: 1;
-  padding: 8px 12px;
-  border-radius: 6px;
-  border: 1.5px solid #8a6534;
+  min-width: 0;
+  padding: 8px 48px 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--brass-3);
   background-image:
     radial-gradient(ellipse 44px 26px at 86% 22%, rgba(255, 250, 232, 0.45), transparent 70%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' seed='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncA type='linear' slope='0.13'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, #faf0d0, #eedcaa);
+    var(--tex-paper),
+    linear-gradient(180deg, #fbf2d6, #eedcaa);
+  background-size: auto, 220px 220px, auto;
   box-shadow:
-    inset 0 2px 5px rgba(110, 70, 20, 0.32),
-    inset 0 -1px 2px rgba(255, 250, 230, 0.55),
-    inset 3px 0 4px rgba(110, 70, 20, 0.12),
-    0 1px 0 rgba(255, 244, 210, 0.4);
+    inset 0 2px 5px rgba(110, 70, 20, 0.28),
+    inset 0 -1px 2px rgba(255, 250, 230, 0.55);
   font-size: 15px;
-  color: #4a2e10;
+  color: var(--ink);
   font-family: inherit;
 }
-.name-input:focus { outline: 2px solid rgba(190, 140, 60, 0.6); filter: brightness(1.04); }
+.name-input:focus {
+  outline: 2px solid rgba(201, 162, 74, 0.55);
+  outline-offset: 1px;
+  filter: brightness(1.03);
+}
 .options-row { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 4px 0 20px; flex-wrap: wrap; }
 .seed-label { margin-left: 12px; }
 .seed-input {
@@ -683,7 +656,7 @@ function resume(): void {
   border: 1.5px solid #8a6534;
   background-image:
     radial-gradient(ellipse 30px 18px at 84% 20%, rgba(255, 250, 232, 0.4), transparent 70%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' seed='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncA type='linear' slope='0.13'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23m)'/%3E%3C/svg%3E"),
+    var(--tex-paper),
     linear-gradient(180deg, #faf0d0, #eedcaa);
   box-shadow:
     inset 0 2px 4px rgba(110, 70, 20, 0.3),
@@ -693,55 +666,15 @@ function resume(): void {
   font-family: inherit;
 }
 
-/* ---------- 开始按钮：与小按钮同款的做旧木块 ---------- */
+/* ---------- 开始按钮：黄铜主按钮 + 更宽的点击面 ---------- */
 .begin-btn {
   width: 78%;
   font-size: 21px;
   padding: 14px;
   letter-spacing: 9px;
   text-indent: 9px;
-  color: #f7e7c0;
-  text-shadow: 0 1px 3px rgba(30, 15, 0, 0.65);
-  border: 2px solid #46300e;
-  border-radius: 10px;
-  --wear: var(--wear-4);
-  background-image:
-    /* 污渍（褐色斑块） */
-    radial-gradient(ellipse 28px 17px at 11% 74%, rgba(70, 35, 8, 0.3), transparent 72%),
-    radial-gradient(ellipse 24px 15px at 74% 14%, rgba(90, 48, 12, 0.24), transparent 72%),
-    radial-gradient(ellipse 18px 12px at 44% 88%, rgba(80, 42, 10, 0.2), transparent 72%),
-    /* 木节（暗色结疤+高光） */
-    radial-gradient(ellipse 14px 11px at 83% 68%, rgba(55, 26, 4, 0.55), transparent 75%),
-    radial-gradient(ellipse 7px 5px at 83% 68%, rgba(255, 232, 180, 0.28), transparent 75%),
-    /* 边角磨损高光 */
-    radial-gradient(ellipse 55% 40% at 20% 5%, rgba(255, 236, 190, 0.38), transparent 72%),
-    radial-gradient(ellipse 42% 32% at 96% 96%, rgba(255, 238, 200, 0.16), transparent 72%),
-    /* 木纹 */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='180'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.013 0.24' numOctaves='3' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncG type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncB type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncA type='linear' slope='0.38'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='300' height='180' filter='url(%23w)'/%3E%3C/svg%3E"),
-    /* 独有磨损（划痕） */
-    var(--wear),
-    /* 板缝 */
-    linear-gradient(180deg, transparent 0 54%, rgba(28, 12, 0, 0.45) 54% 58%, transparent 58%),
-    /* 木底色 */
-    linear-gradient(180deg, #b08848 0%, #8a6330 55%, #68461c 100%);
-  box-shadow:
-    inset 0 1px 1px rgba(255, 232, 180, 0.55),
-    inset 0 -2px 4px rgba(40, 20, 0, 0.55),
-    inset 2px 0 3px rgba(255, 232, 180, 0.16),
-    inset -2px 0 4px rgba(40, 20, 0, 0.3),
-    0 3px 0 #37230a,
-    0 6px 12px rgba(0, 0, 0, 0.45);
+  border-radius: 11px;
 }
-.begin-btn:hover { filter: brightness(1.12); }
-.begin-btn:active {
-  transform: translateY(3px);
-  box-shadow:
-    inset 0 2px 6px rgba(60, 30, 5, 0.55),
-    inset 0 -1px 2px rgba(255, 236, 190, 0.3),
-    0 1px 0 #37230a,
-    0 3px 6px rgba(0, 0, 0, 0.4);
-}
-
 /* ---------- 火漆印章（左上角，做旧手绘风） ---------- */
 .wax-seal {
   position: absolute;
@@ -759,11 +692,12 @@ function resume(): void {
   text-shadow: 0 1px 2px rgba(40, 8, 0, 0.6);
   background-image:
     /* 蜡面颗粒 */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.4' intercept='0.1'/%3E%3CfeFuncG type='linear' slope='0.4' intercept='0.1'/%3E%3CfeFuncB type='linear' slope='0.4' intercept='0.1'/%3E%3CfeFuncA type='linear' slope='0.18'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23m)'/%3E%3C/svg%3E"),
+    var(--tex-paper),
     /* 蜡体明暗 */
     radial-gradient(circle at 32% 26%, rgba(255, 208, 160, 0.4), transparent 48%),
     radial-gradient(circle at 66% 78%, rgba(60, 8, 0, 0.45), transparent 60%),
     radial-gradient(circle at 34% 30%, #b8553c 0%, #9c2f1e 48%, #74190e 100%);
+  background-size: 140px 140px, auto, auto, auto;
   border-radius: 52% 44% 55% 46% / 48% 55% 43% 53%;
   transform: rotate(-10deg);
   box-shadow:
@@ -815,8 +749,9 @@ function resume(): void {
   border: 2px solid #5f4213;
   background-image:
     radial-gradient(circle at 32% 26%, rgba(255, 246, 215, 0.9), rgba(255, 246, 215, 0) 46%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' seed='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncA type='linear' slope='0.14'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23m)'/%3E%3C/svg%3E"),
+    var(--tex-paper),
     linear-gradient(180deg, #ecd8a4 0%, #d6b87c 55%, #c2a25e 100%);
+  background-size: auto, 200px 200px, auto;
   box-shadow:
     inset 0 2px 3px rgba(255, 246, 215, 0.85),
     inset 0 -3px 5px rgba(90, 55, 10, 0.4),
@@ -835,8 +770,9 @@ function resume(): void {
   z-index: -1;
   background-image:
     radial-gradient(circle at 32% 26%, rgba(255, 236, 190, 0.3), transparent 62%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015 0.26' numOctaves='3' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncG type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncB type='linear' slope='0.42' intercept='0.04'/%3E%3CfeFuncA type='linear' slope='0.3'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='120' filter='url(%23w)'/%3E%3C/svg%3E"),
+    var(--tex-wood),
     linear-gradient(180deg, #ac8046 0%, #7d5a2c 60%, #63441d 100%);
+  background-size: auto, 180px 180px, auto;
   box-shadow:
     0 3px 7px rgba(0, 0, 0, 0.55),
     0 1px 2px rgba(0, 0, 0, 0.4),
@@ -848,6 +784,41 @@ function resume(): void {
   box-shadow:
     inset 0 2px 6px rgba(90, 55, 10, 0.5),
     0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* ---------- 轻量动效：罗盘指针微摆、浮尘、羊皮纸入场 ---------- */
+.compass-needle {
+  transform-origin: 452px 100px;
+  animation: needleSway 11s ease-in-out infinite;
+}
+@keyframes needleSway {
+  0%, 100% { transform: rotate(-2.2deg); }
+  50% { transform: rotate(2.6deg); }
+}
+.parchment { animation: paperIn 0.45s ease-out both; }
+@keyframes paperIn { from { opacity: 0; } }
+.dust {
+  position: absolute;
+  z-index: 1;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 246, 208, 0.85), rgba(255, 238, 180, 0) 70%);
+  opacity: 0.55;
+  pointer-events: none;
+  animation: dustFloat 10s ease-in-out infinite;
+}
+.dust-1 { left: 9%; top: 64%; animation-delay: -1.2s; animation-duration: 9s; }
+.dust-2 { left: 86%; top: 30%; animation-delay: -3.4s; animation-duration: 12s; }
+.dust-3 { left: 74%; top: 72%; animation-delay: -5.1s; animation-duration: 11s; }
+.dust-4 { left: 18%; top: 22%; animation-delay: -2.3s; animation-duration: 13s; }
+.dust-5 { left: 54%; top: 12%; animation-delay: -6.6s; animation-duration: 10s; }
+.dust-6 { left: 44%; top: 84%; animation-delay: -4.2s; animation-duration: 12.5s; }
+@keyframes dustFloat {
+  0%, 100% { transform: translate3d(0, 0, 0); opacity: 0.18; }
+  30% { opacity: 0.6; }
+  50% { transform: translate3d(12px, -22px, 0); opacity: 0.45; }
+  70% { opacity: 0.55; }
 }
 
 /* ---------- 小屏适配 ---------- */
@@ -881,7 +852,7 @@ function resume(): void {
   .setup-list { gap: 6px; margin-bottom: 8px; }
   .options-row { margin-bottom: 10px; }
   .begin-btn { padding: 9px; font-size: 17px; letter-spacing: 7px; }
-  .name-input { padding: 5px 10px; font-size: 14px; }
+  .name-input { padding: 5px 44px 5px 10px; font-size: 14px; }
   .wax-seal {
     left: 10px;
     top: -16px;

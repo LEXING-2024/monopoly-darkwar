@@ -4,8 +4,9 @@ import { showNoMoney, store } from '../store'
 import { BUILDINGS, RESERVE_MULT, RESOURCES, TERRAIN_RESOURCE } from '../../core/config'
 import { canBuild, levelCost, repairCost } from '../../core/buildings'
 import { bridgeRepairCost, bridgeToll, exploreCost, tileOutput, tileRent } from '../../core/economy'
-import type { ResourceType } from '../../core/types'
+import type { Building, ResourceType } from '../../core/types'
 import BaseModal from './BaseModal.vue'
+import Icon from './Icon.vue'
 
 const s = computed(() => store.state)
 const game = computed(() => store.game)
@@ -35,6 +36,11 @@ const selResource = computed(() => {
   const t = selTile.value
   if (!t || t.type !== 'terrain') return null
   return RESOURCES[TERRAIN_RESOURCE[t.terrain]]
+})
+const selResourceKey = computed(() => {
+  const t = selTile.value
+  if (!t || t.type !== 'terrain') return 'map'
+  return TERRAIN_RESOURCE[t.terrain]
 })
 /** 自有已勘探地块的储量倍率 */
 const selReserveMult = computed(() => {
@@ -95,7 +101,7 @@ function onBuy(): void {
 }
 
 /** 升级建筑（现金不足统一弹窗） */
-function onUpgrade(b: { id: string; type: string; level: number }): void {
+function onUpgrade(b: Building): void {
   if (!game.value || !selTile.value) return
   const cost = levelCost(game.value, b.type, b.level + 1)
   const name = BUILDINGS.find(x => x.id === b.type)?.name ?? '建筑'
@@ -103,7 +109,7 @@ function onUpgrade(b: { id: string; type: string; level: number }): void {
 }
 
 /** 修理建筑（现金不足统一弹窗） */
-function onRepair(buildingId: string): void {
+function onRepair(buildingId: number): void {
   if (!game.value || !selTile.value || !me.value) return
   const b = selTile.value.buildings.find(x => x.id === buildingId)
   if (!b) return
@@ -142,26 +148,31 @@ const bridgeCost = computed(() => {
   // 与核心/AI 同一口径：升级成本半价（economy.bridgeRepairCost 唯一来源）
   return bridgeRepairCost(t)
 })
+
+/** 建造实际费用（含春季 -20%、景气修正），与核心 canBuild/levelCost 完全一致 */
+function buildCost(defId: string): number {
+  return game.value ? levelCost(game.value, defId, 1) : 0
+}
 </script>
 
 <template>
-  <BaseModal v-if="store.tileModalOpen && selTile" width="min(400px, 92vw)" :dim="0.55" :z="150" @backdrop="close">
-      <div class="modal-title">🗺️ 地块详情</div>
+  <BaseModal v-if="store.tileModalOpen && selTile" width="md" :dim="0.55" :z="150" @backdrop="close">
+      <div class="modal-title"><Icon name="map" :size="18" /> 地块详情</div>
       <div class="modal-body">
-        <p class="big">{{ selTile.icon }} {{ selTile.name }}</p>
+        <p class="big"><Icon name="map" :size="15" /> {{ selTile.name }}</p>
         <p class="muted">
           <template v-if="selTile.type === 'terrain'">
             价格 ￥{{ selTile.price }} · 主人：{{ selTile.owner !== null ? s!.players[selTile.owner].name : '无' }}
             <span v-if="rentInfo"> · <b class="rent">{{ rentInfo }}</b></span>
             <template v-if="selTile.owner === me?.id && selResource">
-              · 产出：{{ selResource.icon }}{{ selResource.name }}
+              · 产出：<Icon :name="selResourceKey" :size="13" />{{ selResource.name }}
               <template v-if="selTile.explored">
                 · 储量：{{ reserves[selTile.reserve] }}（×{{ selReserveMult }}）
                 <template v-if="selOutput !== null"> · 产量 {{ Math.round(selOutput * 10) / 10 }}/回合</template>
               </template>
               <template v-else> · 储量未勘探（勘探费 ￥{{ exploreCost(selTile) }}）</template>
             </template>
-            <template v-if="selTile.disaster"> · ⚠️灾害中</template>
+            <template v-if="selTile.disaster"> · <Icon name="alert" :size="12" /> 灾害中</template>
           </template>
           <template v-else-if="selTile.type === 'bridge'">
             等级 {{ selTile.bridgeLevel }} / 3 · 主人：{{ selTile.owner !== null ? s!.players[selTile.owner].name : '无' }}
@@ -172,46 +183,51 @@ const bridgeCost = computed(() => {
         </p>
         <div v-if="selTile.buildings.length" class="bldgs">
           <div v-for="b in selTile.buildings" :key="b.id" class="bldg">
-            {{ BUILDINGS.find(x => x.id === b.type)?.icon }}{{ BUILDINGS.find(x => x.id === b.type)?.name }} Lv{{ b.level }}
+            <Icon name="building" :size="13" /> {{ BUILDINGS.find(x => x.id === b.type)?.name }} Lv{{ b.level }}
             <button
               v-if="myTurn && selTile.owner === me?.id && b.level < 3"
               class="btn small"
               :disabled="!ops || ops.upgrade <= 0"
               :title="(!ops || ops.upgrade <= 0) ? '本回合升级次数已用完（每回合 1 次）' : ''"
               @click="onUpgrade(b)"
-            >升级 ￥{{ levelCost(game!, b.type, b.level + 1) }}</button>
+            ><Icon name="arrowUp" :size="11" /> 升级 ￥{{ levelCost(game!, b.type, b.level + 1) }}</button>
             <button
               v-if="myTurn && selTile.owner === me?.id && b.level < 3 && b.damaged"
               class="btn small" :disabled="!ops || ops.repair <= 0" @click="onRepair(b.id)"
-            >修理</button>
+            ><Icon name="hammer" :size="11" /> 修理</button>
           </div>
         </div>
       </div>
 
       <div class="modal-actions">
         <div v-if="myTurn && ops" class="ops-line">
-          本回合可操作：🏗️建造 {{ ops.build }} · ⬆️升级 {{ ops.upgrade }} · 🔧修理 {{ ops.repair }} · ⛏️勘探 {{ ops.explore }} · 🌉修桥 {{ ops.bridge }}
+          <span class="ops-title">本回合可操作</span>
+          <span><Icon name="building" :size="11" /> 建造 {{ ops.build }}</span>
+          <span><Icon name="arrowUp" :size="11" /> 升级 {{ ops.upgrade }}</span>
+          <span><Icon name="hammer" :size="11" /> 修理 {{ ops.repair }}</span>
+          <span><Icon name="pick" :size="11" /> 勘探 {{ ops.explore }}</span>
+          <span><Icon name="bridge" :size="11" /> 修桥 {{ ops.bridge }}</span>
         </div>
         <button
           v-if="myTurn && standingTile && standingTile.index === selTile.index &&
                 standingTile.owner === null && !standingTile.seized &&
                 (standingTile.type === 'terrain' || standingTile.type === 'bridge')"
           class="btn primary" :class="{ 'buy-warn': buyWarn }" @click="onBuy"
-        >🏷️ 购买{{ standingTile.name }}（￥{{ standingTile.price }}）
+        ><Icon name="tag" :size="13" /> 购买{{ standingTile.name }}（￥{{ standingTile.price }}）
           <template v-if="buyWarn">⚠️ 买后余 ￥{{ me!.cash - standingTile.price }}</template>
         </button>
         <button
           v-if="myTurn && selTile.owner === me?.id && selTile.type === 'terrain' && !selTile.explored"
           class="btn" :disabled="!ops || ops.explore <= 0" @click="onExplore"
-        >⛏️ 勘探（￥{{ exploreCost(selTile) }}）</button>
+        ><Icon name="pick" :size="13" /> 勘探（￥{{ exploreCost(selTile) }}）</button>
         <button
           v-if="myTurn && selTile.owner === me?.id && selTile.type === 'terrain' && !slotsFull"
           class="btn" :disabled="!ops || ops.build <= 0" @click="buildMenuOpen = !buildMenuOpen"
-        >🏗️ 建造</button>
+        ><Icon name="building" :size="13" /> 建造</button>
         <button
           v-if="myTurn && selTile.type === 'bridge' && selTile.owner === me?.id && selTile.bridgeLevel < 3"
           class="btn" :disabled="!ops || ops.bridge <= 0" @click="onRepairBridge"
-        >🌉 修桥/升级（￥{{ bridgeCost }}）</button>
+        ><Icon name="bridge" :size="13" /> 修桥/升级（￥{{ bridgeCost }}）</button>
         <button class="btn" @click="close">关闭</button>
       </div>
 
@@ -220,12 +236,13 @@ const bridgeCost = computed(() => {
       </p>
 
       <div v-if="buildMenuOpen && selTile" class="build-menu">
-        <div v-if="!buildable.length" class="menu-tip">⚠️ 建筑位已满（每格最多 2 座）</div>
+        <div class="menu-tip">每格：资源生产位 ×1 + 通用位 ×1（商业/防灾/科技共用）</div>
+        <div v-if="!buildable.length" class="menu-tip">当前没有可建造的建筑（对应位已占用或地形不符）</div>
         <button
           v-for="b in buildable" :key="b.id"
           class="btn small" :disabled="!ops || ops.build <= 0"
-          @click="noMoneyOr(() => { game?.buildAt(selTile.index, b.id); buildMenuOpen = false }, b.cost, `建造「${b.name}」`)"
-        >{{ b.icon }}{{ b.name }}（￥{{ b.cost }}）</button>
+          @click="noMoneyOr(() => { game?.buildAt(selTile.index, b.id); buildMenuOpen = false }, buildCost(b.id), `建造「${b.name}」`)"
+        ><Icon name="building" :size="11" /> {{ b.name }}（￥{{ buildCost(b.id) }}）</button>
         <button class="btn small" @click="buildMenuOpen = false">取消</button>
       </div>
   </BaseModal>
@@ -236,11 +253,17 @@ const bridgeCost = computed(() => {
 .modal-body { color: #4a3018; }
 .big { font-size: 17px; margin: 6px 0; color: #4a3018; }
 .muted { font-size: 13px; color: #7a5a38; margin: 4px 0; line-height: 1.6; }
-.rent { color: #b0392e; }
+.rent { color: var(--rise-ink); font-weight: 700; }
 .bldgs { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .bldg { font-size: 13px; color: #4a3018; display: flex; align-items: center; gap: 6px; justify-content: center; }
 .modal-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: center; flex-wrap: wrap; }
-.ops-line { width: 100%; font-size: 12px; color: #8a6a44; border-top: 1px dashed #c9b28a; padding-top: 8px; }
+.ops-line {
+  width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  font-size: 11.5px; color: var(--ink-3); border-top: 1px dashed rgba(160, 120, 60, 0.45);
+  padding-top: 8px;
+}
+.ops-line span { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.ops-title { font-weight: bold; color: var(--ink-2); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .buy-warn { animation: warnPulse 1.2s ease-in-out infinite; }
 @keyframes warnPulse { 50% { box-shadow: 0 0 12px rgba(220, 110, 60, 0.85); } }

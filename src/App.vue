@@ -11,7 +11,6 @@ import WheelModal from './ui/components/WheelModal.vue'
 import CardModal from './ui/components/CardModal.vue'
 import LandingModals from './ui/components/LandingModals.vue'
 import BidModal from './ui/components/BidModal.vue'
-import DilemmaModal from './ui/components/DilemmaModal.vue'
 import TradeOfferModal from './ui/components/TradeOfferModal.vue'
 import SimpleModals from './ui/components/SimpleModals.vue'
 import ChooseModals from './ui/components/ChooseModals.vue'
@@ -22,6 +21,7 @@ import BuildingModal from './ui/components/BuildingModal.vue'
 import TileModal from './ui/components/TileModal.vue'
 import LoadingOverlay from './ui/components/LoadingOverlay.vue'
 import NoMoneyModal from './ui/components/NoMoneyModal.vue'
+import Icon from './ui/components/Icon.vue'
 
 const inGame = computed(() => !!store.state?.started)
 const prompt = computed(() => store.prompt)
@@ -58,6 +58,12 @@ onBeforeUnmount(() => {
       <div class="main">
         <BoardCanvas class="board" />
         <aside class="panel">
+          <div class="panel-head">
+            <span class="ph-seal"><Icon name="compass" :size="15" /></span>
+            <span class="ph-title">商路战局</span>
+            <span class="ph-rule" />
+            <span class="ph-meta" v-if="store.state">第 {{ store.state.totalRound ?? store.state.round }} 回合</span>
+          </div>
           <div class="panel-scroll">
             <PlayerPanel />
             <ActionBar />
@@ -81,7 +87,6 @@ onBeforeUnmount(() => {
         :prompt="prompt"
       />
       <BidModal v-else-if="prompt?.type === 'bid'" :prompt="prompt" />
-      <DilemmaModal v-else-if="prompt?.type === 'dilemma'" :prompt="prompt" />
       <TradeOfferModal v-else-if="prompt?.type === 'trade-offer'" :prompt="prompt" />
       <ChooseModals
         v-else-if="prompt && ['choose-resource', 'choose-tile'].includes(prompt.type)"
@@ -106,8 +111,8 @@ onBeforeUnmount(() => {
     <!-- 竖屏旋转提示 -->
     <div v-if="inGame && isPortrait" class="rotate-hint">
       <div class="rotate-card">
-        <div class="rotate-icon">📱</div>
-        <div class="rotate-arrow">⟳</div>
+        <div class="rotate-icon"><Icon name="phone" :size="42" /></div>
+        <div class="rotate-arrow"><Icon name="rotate" :size="30" /></div>
         <p>请将设备旋转至<b>横屏</b>游玩</p>
         <p class="rotate-sub">棋盘与信息面板将并排显示</p>
       </div>
@@ -116,6 +121,54 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.panel-head {
+  flex: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 8px;
+  margin-bottom: 6px;
+  border-radius: 9px;
+  color: #f3dfb4;
+  border: 1px solid rgba(201, 162, 74, 0.42);
+  background-image:
+    linear-gradient(180deg, rgba(255, 236, 190, 0.10), rgba(0, 0, 0, 0.26)),
+    var(--tex-wood);
+  background-size: auto, 300px 300px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 200, 0.16),
+    0 2px 5px rgba(0, 0, 0, 0.28);
+}
+.ph-seal {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  border-radius: 50%;
+  color: #ffe3a2;
+  border: 1px solid rgba(230, 199, 120, 0.65);
+  background: radial-gradient(circle at 35% 30%, rgba(255, 224, 160, 0.22), rgba(60, 36, 12, 0.3));
+  box-shadow: inset 0 0 0 2px rgba(30, 18, 6, 0.35);
+}
+.ph-title {
+  font-size: 13.5px;
+  letter-spacing: 3px;
+  color: #f6e4bd;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+.ph-rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(201, 162, 74, 0.45), transparent);
+}
+.ph-meta {
+  font-size: 10.5px;
+  color: rgba(241, 220, 176, 0.72);
+  letter-spacing: 1px;
+  font-family: var(--font-num);
+}
 /* 结束回合悬浮按钮：棋盘（左侧 70%）右下角 */
 .end-turn-fab {
   position: fixed;
@@ -145,14 +198,17 @@ onBeforeUnmount(() => {
   background: linear-gradient(160deg, #4a3218, #2c1c0a);
   box-shadow: 0 10px 36px rgba(0, 0, 0, 0.6);
 }
-.rotate-icon { font-size: 44px; }
+.rotate-icon { display: flex; justify-content: center; color: #f0dca8; }
 .rotate-arrow {
-  font-size: 30px;
+  display: flex;
+  justify-content: center;
   color: #ffd76a;
   animation: spin2 1.6s linear infinite;
   margin: 4px 0 8px;
 }
 .rotate-card p { margin: 4px 0; font-size: 17px; letter-spacing: 2px; }
+html.is-mobile .panel-head { height: 31px; margin-bottom: 4px; }
+html.is-mobile .ph-title { font-size: 12px; letter-spacing: 2px; }
 .rotate-sub { font-size: 12px; color: #b99a6a; letter-spacing: 1px; }
 @keyframes spin2 { to { transform: rotate(360deg); } }
 </style>

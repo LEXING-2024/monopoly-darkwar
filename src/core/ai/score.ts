@@ -131,9 +131,9 @@ export function exploreScore(game: GameApi, playerId: number, tile: Tile): numbe
   if (tile.explored || tile.type !== 'terrain') return -Infinity
   const res = TERRAIN_RESOURCE[tile.terrain as Terrain]
   if (!res) return -Infinity
-  // baseOutput = 1：期望储量倍率 ≈ 1.05，勘探价值 = 提前锁定富矿的期望增益
+  // 基础产出 0.5 × 期望储量倍率 ≈1.05：勘探价值 = 提前锁定富矿的期望增益
   const expectedMult = RESERVE_WEIGHTS.reduce((a, [r, w]) => a + RESERVE_MULT[r] * w, 0)
-  const outPerRound = expectedMult
+  const outPerRound = RESOURCES[res].baseOutput * expectedMult
   const gain = outPerRound * s.market[res] * investHorizon(game) * disasterDiscount(game, playerId, tile)
   return gain - exploreCost(tile)
 }

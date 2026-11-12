@@ -4,12 +4,12 @@ import BaseModal from './BaseModal.vue'
 </script>
 
 <template>
-  <BaseModal v-if="store.noMoneyToast" width="min(400px, 92vw)">
+  <BaseModal v-if="store.noMoneyToast" width="md">
       <div class="modal-title">💰 资金不足</div>
       <div class="modal-body">
         <p class="big">
           {{ store.noMoneyToast.what }}需要 ￥{{ store.noMoneyToast.need }}，
-          你现有 ￥{{ store.noMoneyToast.cash }}，无法执行！
+          你现有 ￥{{ store.state?.players[store.noMoneyToast.player]?.cash ?? 0 }}，无法执行！
         </p>
       </div>
       <div class="modal-actions">

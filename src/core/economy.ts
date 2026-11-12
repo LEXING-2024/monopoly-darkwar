@@ -1,7 +1,8 @@
 // ============ 经济计算：租金 / 资源产出（文档 4、8、9） ============
 
 import {
-  BRIDGES, BRIDGE_REPAIR_DISCOUNT, BUILDING_DEFS, CLIMATE, CLIMATE_MODS, EAST_BRIDGE, EXPLORE_COST_RATIO, RENT_RAMP_MIN, RENT_RAMP_ROUNDS,
+  BRIDGES, BRIDGE_REPAIR_DISCOUNT, BUILDING_DEFS, CLIMATE, CLIMATE_MODS, EAST_BRIDGE, ENDGAME,
+  EXPLORE_COST_RATIO, RENT_RAMP_MIN, RENT_RAMP_ROUNDS, RENT_STALL_MAX, RENT_STALL_PER_ROUND, RENT_STALL_START,
   RESERVE_MULT, RESERVE_WEIGHTS, RESOURCES, SEASONS, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from './config'
 import { ownsTech } from './market'
@@ -11,12 +12,14 @@ import type { GameApi, Player, Reserve, ResourceType, Tile } from './types'
 export function globalRentMod(game: GameApi): number {
   let m = 1
   for (const mod of game.state.rentMods) if (mod.turns > 0) m *= mod.factor
-  if (game.state.endgame) m *= 1.5
+  if (game.state.endgame) m *= ENDGAME.rentMod
   // 景气修正：繁荣租金 +10%、衰退 -10%（危机走过路费专项）
   m *= CLIMATE_MODS[game.state.climate].rent
   // 开局租金缓启动：前 N 轮从 60% 线性恢复到 100%
   const r = game.state.totalRound
   if (r < RENT_RAMP_ROUNDS) m *= RENT_RAMP_MIN + (1 - RENT_RAMP_MIN) * (r / RENT_RAMP_ROUNDS)
+  // 反僵持：拖到后期的对局租金逐步上涨（超时局的共同特征是 3+ 人长期共存）
+  m *= 1 + Math.min(RENT_STALL_MAX, Math.max(0, (r - RENT_STALL_START) * RENT_STALL_PER_ROUND))
   return m
 }
 
@@ -25,13 +28,16 @@ export function tileRent(game: GameApi, tile: Tile, owner: Player | null): numbe
   let rent = tile.baseRent
   if (tile.type === 'bridge') return 0   // 桥梁过路费单独算
   if (owner) {
+    // 商业建筑每格限 1 座；这里取 max 而不是 sum，兼容旧存档里可能存在的两座商业，
+    // 避免历史存档继续享受 5.2 倍叠加租金。
     let rentMult = 1
+    let commercialMult = 0
     for (const b of tile.buildings) {
       if (b.damaged) continue   // 受损建筑停摆：不加成租金，修理后才恢复
       const def = BUILDING_DEFS[b.type]
-      if (def.rentMult) rentMult += def.rentMult * b.level
+      if (def.rentMult) commercialMult = Math.max(commercialMult, def.rentMult * b.level)
     }
-    rent *= rentMult
+    rent *= 1 + commercialMult
     // 玩家租金加成（开办集市等）
     for (const m of owner.status.rentBonus) {
       if (m.turns > 0) rent *= m.factor
@@ -117,7 +123,7 @@ export function collectOutput(game: GameApi, playerId: number): Partial<Record<R
       })
       if (!prot) {
         switch (tile.disaster.kind) {
-          case 'fire': case 'snow': case 'typhoon': case 'quake':
+          case 'fire': case 'snow': case 'typhoon': case 'quake': case 'pollution':
             out = 0
             break
           case 'sandstorm': case 'flood':

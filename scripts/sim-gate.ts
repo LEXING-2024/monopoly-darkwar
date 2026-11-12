@@ -6,11 +6,13 @@
 import { execSync } from 'node:child_process'
 
 const GAMES = process.argv[2] ?? '500'
+// 2026-11-12 经济重平衡后实测中位：easy 298 / normal 305 / hard 310 / hell 311。
+// 地板沿用保守值，只拦截恶性回退（对局被压得过短），不把长度当硬指标。
 const FLOORS: Record<string, number> = {
-  easy: 243,
-  normal: 245,
-  hard: 243,
-  hell: 247,
+  easy: 250,
+  normal: 255,
+  hard: 245,
+  hell: 240,
 }
 
 let failed = false

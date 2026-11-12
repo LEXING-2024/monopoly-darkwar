@@ -6,13 +6,17 @@
 项目根目录\
 ├── assets\                 # ← 素材总目录
 │   ├── images\             # 通用位图（png/jpg/webp）：背景、图标、贴纸
-│   │   └── board-parchment.webp   # 棋盘羊皮纸底图（已在用：scene.ts import 打包加载）
+│   │   ├── board-terrain.webp     # 棋盘地形软底图（雪山/等高线/纸纹已烘焙；树/河/路/桥由 Canvas 叠加）
+│   │   ├── board-parchment.webp   # 旧羊皮纸底图（素材缺失时的回退）
+│   │   ├── terrain\               # 参考图雪山浮雕源图（mountains-top.png；make-terrain.py 读取后烘焙进 board-terrain.webp）
+│   │   ├── ui-wood.webp           # UI 木桌/木牌材质（可平铺，scripts/make-textures.py 生成）
+│   │   └── ui-paper.webp          # 羊皮纸颗粒叠加层（可平铺，scripts/make-textures.py 生成）
 │   ├── sprites\            # 精灵/序列帧（棋子贴图、动画帧、粒子贴图）
 │   ├── audio\              # 音频文件（mp3/ogg/wav）：bgm、效果音
 │   ├── fonts\              # 字体文件（ttf/otf/woff2）
 │   └── README.md           # 本说明
-├── 游戏截图\               # 宣传截图（9 张，已有，保持不动）
-├── public\                 # Vite 静态目录：仅需要固定 URL 直链的素材放这里（如 favicon、robots）
+├── 游戏截图\               # 宣传截图（01~09 旧版；10~11 视觉升级；12~17 地图/台风/涨跌配色验证；18~21 台风/灾害/路线与图标）
+├── public\                 # Vite 静态目录：仅需要固定 URL 直链的素材放这里
 └── src\                    # 代码生成素材（见下）
 ```
 
@@ -22,11 +26,12 @@
 
 | 素材 | 生成位置 | 区分方式 |
 |------|---------|---------|
-| 棋盘 / 地块 / 季节贴图 / 灾害特效 | `src/render/scene.ts` | Phaser 矢量绘制（Graphics、渐变、粒子），按场景图层区分 |
+| 棋盘地图（森林 / 高原 / 沙漠 / 沿海 / 同一条河 / 双桥） | `assets/images/board-terrain.webp` + `assets/images/terrain/*.png` + `src/render/boardArt.ts` + `src/render/palette.ts` | 雪山浮雕按参考图烘焙进底图；松林、河流、道路、桥由 Canvas 叠加后一次性烘焙；**地图内不绘制文字、房屋** |
+| 地块卡片 / 建筑徽章 / 灾害特效 | `src/render/scene.ts` + `src/render/tileArt.ts` | 按地形、建筑类别与灾害类型区分 |
 | 棋子形状与描边 | `src/render/pieces.ts` | 按玩家形状枚举（shape）区分 |
-| UI 羊皮纸 / 木纹 / 纸纹 | 各 Vue 组件内嵌 SVG data-URI（feTurbulence 噪点） | 按组件区分（TileModal/ActionBar/BuildingModal…） |
+| UI 材质 | `assets/images/ui-wood.webp`、`ui-paper.webp` + `src/style.css` 的 CSS token | 全项目共用一套 `--tex-wood` / `--tex-paper`，不再为每个组件重复内嵌 SVG 噪点滤镜 |
 | 音效 | `src/core/sfx.ts` | WebAudio 实时合成（tone/noise），按 `SfxName` 枚举区分 |
-| 宣传截图 | `游戏截图\` | 按编号 01-09 + 内容命名 |
+| 宣传截图 | `游戏截图\` | 按编号 01-21 + 内容命名 |
 
 ### 2. 文件素材命名规范（将来添加图片/音频时遵循）
 
@@ -34,8 +39,12 @@
 - 示例：`assets/sprites/piece-car.png`、`assets/audio/bgm-main.ogg`、`assets/images/ui-logo.png`
 - 运行时加载：素材放 `assets\` 下，代码里 `import url from '../../assets/images/xxx.webp'`（Vite 打包自动处理，见 scene.ts 的 board-parchment 用法）；仅需要固定 URL 直链的（favicon 等）放 `public\`
 
-## 当前状态（2026-08-15）
+## 当前状态（2026-10 视觉升级）
 
-- `assets\images\board-parchment.webp` 已在用：棋盘羊皮纸底图（AIGC 素材，4096×4096 webp，scene.ts preload 后等比铺满 + 边缘晕影叠加；加载失败自动回退程序化羊皮纸）。
-- 其余视觉/音效仍为**代码实时生成**（棋盘地块/棋子/特效/音效），`assets\` 其余子目录供后续扩展。
-- `游戏截图\` 已有 9 张宣传截图（首页/转盘/行动顺序/命运卡/对局全景/交易/规则/灾害总览等）。
+- **地图**：新版商路地图——72 格沿一条圆角矩形闭合商路等弧长排布，圆牌直径 80、步距 86，**零叠压**并留 1.8~6px 细缝；西侧山泉 → 西桥 → 谷地 → 东桥 → 东南海湾是**同一条河**；东南海湾扩展到画框边缘，形成约三分之一棋盘的大海；中央以湖泊、田块、草地、树林和海湾岸线填充，**地图地形内不出现房屋**，也没有任何文字。冬季只在东西桥头显示两小片薄冰提示；台风航线为 86 个约 24px 间距的密集海湾航点，台风每回合连续前进 2~3 点并留下渐隐尾迹；气象站预测线跟随密集航点。
+- **地形风格（2026-10 修订）**：雪山使用参考图的厚涂雪山浮雕板，整体缩到约原来的七成，山脚以浅色岩台、碎石坡、雪沫和上下两条树线接回地面；松林改为同风格的十层枝盘手绘松树，林间另藏低矮岩脊；海面保留原来更好的大湾布局，调成参考图的灰青水彩并降低浪纹对比，取消海面漩涡；河流维持窄河（约 24～50px），用单侧窄岸影、浅滩、砾石洲和岸边草压掉“蓝色水管”的平面感；道路压在卡片下方，不再露出沿海轨道边。地图底图约 283KB，仍是烘焙一次、不逐帧重绘；高原用灰绿岩原、裸岩台地和台地等高线与草甸区分；沙漠用低矮平顶岩丘、枯灌木、石块簇、干裂纹和沙脊风纹做点缀，保留干净的沙海。
+- **地块**：`tileArt.ts` 统一墨线 + 矿物色的彩色图案，不同地形/特殊格使用各自的深色墨线与色环；建筑使用类别色徽章（生产/防灾/科技/商业）；七类灾害都有贴合圆牌的独立贴图、同色外环和类型角标（火/雪/沙/洪/风/污/震），贴图统一裁圆。
+- **UI**：`style.css` 的 token 统一羊皮纸/胡桃木/黄铜/火漆；按钮改为浅色纸牌 + 黄铜主按钮，顶栏为连续纸带，右侧加入「商路战局 / 你的账册 / 行动 / 日志」分区；`Icon.vue` 提供统一线性图标，资源图标用木绿/牛赭/油墨/鱼青四色小牌区分，行动图标用绿/红/紫/火漆红圆底区分；`board-parchment.webp` 仅作棋盘回退底图。涨跌语义色统一为 `--rise` 红 / `--fall` 绿。
+- **性能**：棋盘画布严格按 3:2 棋盘比例自适应（常见 1080p 约 1490×994，低端机长边封顶 2048），地图纹理按画布密度 1.0~1.5 倍生成；色彩一次性烘焙进纹理，不再每帧做全屏 filter；`prefers-reduced-motion` 下关闭动效。
+- `游戏截图\` 新增 10/11（视觉升级）、12/13（地图升级：对局 / 首页）、14（台风近海验证）、15/16（雪山+松林+灰青海+细河流）、17（红涨绿跌配色示意）、18~20（台风尾迹 / 逐级减弱 / 七类灾害地块特效）、21（圆角矩形路线 + 资源/行动图标区分）。
+- **改地图后的重新生成流程**：`npx tsx scripts/export-layout.ts` 导出 `scripts/layout.json`；再执行 `python scripts/make-terrain.py` 生成软底图。雪山浮雕、等高线与纸纹在 Python 阶段烘焙；松树、河流、道路、桥由 `src/render/boardArt.ts` 在运行时叠加，格子位置始终以 `LAYOUT` 为准。

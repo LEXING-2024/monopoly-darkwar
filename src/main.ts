@@ -3,6 +3,13 @@ import { Capacitor } from '@capacitor/core'
 import App from './App.vue'
 import './style.css'
 
+// 开发期调试钩子：便于在控制台/自动化截图脚本中检查对局状态与视觉回归
+if (import.meta.env.DEV) {
+  void import('./ui/store').then(m => {
+    ;(window as unknown as { __store: typeof m.store }).__store = m.store
+  })
+}
+
 /** 设备类型检测（多信号合并，任一命中即视为移动端）：
  *  1. Capacitor 原生环境（APK 内 WebView）
  *  2. UA 字符串（Android / iPhone / iPad / Mobile）

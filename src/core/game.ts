@@ -1,28 +1,28 @@
 // ============ 游戏核心：回合状态机与全部 API（纯 TS，无 DOM 依赖） ============
 
 import {
-  CLIMATE, CLIMATE_MODS, CLIMATE_NAMES, DILEMMA_EVERY, EAST_BRIDGE, INITIAL_CASH, LOG_CAP, MAX_TURNS,
-  PLAYER_COLORS, PLAYER_SHAPES, RESOURCES, SAFE_TURNS, SEASON_CARD_WEIGHT, SEASON_LEN_MAX,
+  CLIMATE, CLIMATE_MODS, CLIMATE_NAMES, EAST_BRIDGE, INITIAL_CASH, LOG_CAP, MAX_TURNS,
+  PLAYER_COLORS, PLAYER_SHAPES, RESOURCES, SEASON_CARD_WEIGHT, SEASON_LEN_MAX,
   SEASON_LEN_MIN, SEASON_ORDER, SEASONS, START_BONUS, START_REPAIR_DISCOUNT,
   TILE_COUNT, TURN_OP_LIMITS, WEST_BRIDGE,
 } from './config'
 import { CHANCE_DECK, FATE_DECK, type CardDef } from './cards'
 import { RNG } from './rng'
-import { createTiles } from './map'
-import { updateMarket, sellUnitPrice, settleMarketPressure } from './market'
+import { createTiles, LAYOUT, SEA_POINTS, nearestCoast } from './map'
+import { updateMarket, sellUnitPrice, settleMarketPressure, recordSale } from './market'
 import {
   bridgeRepairCost, bridgeToll, collectOutput, gdpValue, tileRent, totalValue,
 } from './economy'
 import { updateDisasters } from './disasters'
 import {
   applySeasonEvent, lobby, reportMonopoly, resetSeasonEvent,
-  runDilemma, tickChains,
+  tickChains,
 } from './events'
 import { build, explore, repair, repairCost, upgrade } from './buildings'
 import { checkCrisis, checkMonopolyVictory, declareBankruptcy, forceLiquidate } from './bankruptcy'
 import { aiAct, aiRespond } from './ai'
 import type {
-  AiDifficulty, GameApi, GameState, Player, PlayerShape, Prompt, ResourceType, SfxName, Tile, TradeOffer,
+  AiDifficulty, CasinoBet, GameApi, GameState, Player, PlayerShape, Prompt, ResourceType, SfxName, Tile, TradeOffer, TyphoonState,
 } from './types'
 import { createBrains } from './ai/brain'
 
@@ -191,7 +191,7 @@ export class Game implements GameApi {
     amount = Math.round(amount)
     p.cash += amount
     p.stats.earned += amount
-    p.stats.bankIn += amount   // 银行发放（卡牌/奖金/补贴/困境收益等）
+    p.stats.bankIn += amount   // 银行发放（卡牌/奖金/补贴等）
     this.log(`${p.name} ${label}：+${amount}`, playerId)
     this.sfx('coin')
     this.markChanged()
@@ -227,6 +227,8 @@ export class Game implements GameApi {
       canDecline: false, player: playerId,
     })
     await card.effect(this, playerId)
+    // 卡牌可能改变地块归属（收购/策反/征用等），需立即检查垄断胜利
+    checkMonopolyVictory(this)
     this.markChanged()
   }
 
@@ -253,6 +255,8 @@ export class Game implements GameApi {
       })
     }
     await card.effect(this, playerId)
+    // 卡牌可能改变地块归属（收购/策反/征用等），需立即检查垄断胜利
+    checkMonopolyVictory(this)
     this.markChanged()
   }
 
@@ -270,11 +274,12 @@ export class Game implements GameApi {
     this.log(`「${tile.name}」开始拍卖，底价 ${current}`)
     await this.notice('拍卖开始', `「${tile.name}」开始拍卖！底价 ${current}。`, '🔨')
 
-    // 放弃即退出本轮拍卖（不再被询问），直到剩下最后一名出价者
+    // 放弃即退出本轮拍卖（不再被询问），直到剩下最后一名出价者。
+    // 当前最高出价者跳过：既避免自己抬自己的价，也让「其余人全部放弃」成为终止条件。
     const passed = new Set<number>()
-    while (rotated.some(p => p.alive && !passed.has(p.id))) {
+    while (rotated.some(p => p.alive && !passed.has(p.id) && p.id !== leader)) {
       for (const p of [...rotated]) {
-        if (!p.alive || passed.has(p.id)) continue
+        if (!p.alive || passed.has(p.id) || p.id === leader) continue
         const minBid = leader === null ? current : Math.max(current + 50, Math.round((current * 1.05) / 10) * 10)
         const ans = await this.prompt<{ pass: boolean; bid?: number }>({
           type: 'bid', title: `拍卖「${tile.name}」`, tile: tileIndex,
@@ -314,6 +319,7 @@ export class Game implements GameApi {
     this.sfx('coin')
     this.markChanged()
     checkMonopolyVictory(this)
+    if (this.state.winner !== null) this.endAction()
     return leader
   }
 
@@ -339,6 +345,8 @@ export class Game implements GameApi {
     this.sfx('coin')
     this.markChanged()
     checkMonopolyVictory(this)
+    // 胜利发生在行动阶段：立刻结束本回合，避免人类还要手动点“结束回合”
+    if (this.state.winner !== null) this.endAction()
   }
 
   buildAt(tileIndex: number, defId: string): boolean {
@@ -414,6 +422,8 @@ export class Game implements GameApi {
     p.cash += income
     p.stats.earned += income
     p.stats.resourceIncome += income   // 金钱流向观测
+    // 所有玩家的大额抛售都计入供给压力：人类玩家不再能无限量、无成本地砸盘
+    recordSale(this, res, units)
     this.log(`「${p.name}」卖出 ${units} 单位${RESOURCES[res].name}（+${income}）`, p.id)
     this.sfx('coin')
     this.markChanged()
@@ -424,8 +434,11 @@ export class Game implements GameApi {
     return lobby(this, this.state.currentPlayer, level)
   }
 
-  reportTarget(targetId: number): Promise<boolean> {
-    return reportMonopoly(this, this.state.currentPlayer, targetId)
+  async reportTarget(targetId: number): Promise<boolean> {
+    const ok = await reportMonopoly(this, this.state.currentPlayer, targetId)
+    // 举报/强制拍卖可能直接产生垄断胜者
+    if (this.state.winner !== null) this.endAction()
+    return ok
   }
 
   /** 主动认输 */
@@ -475,6 +488,7 @@ export class Game implements GameApi {
     this.sfx('coin')
     this.markChanged()
     checkMonopolyVictory(this)
+    if (this.state.winner !== null) this.endAction()
     return true
   }
 
@@ -527,9 +541,10 @@ export class Game implements GameApi {
       roundsNoBankruptcy: 0,
       firstBankruptTurn: null,
       winner: null,
+      endReason: null,
       bankruptOrder: [],
       log: [],
-      casinoBet: null,
+      casinoBets: [],
       speculation: [],
       seasonEvent: null,
       deckLeft: { fate: FATE_DECK.length, chance: CHANCE_DECK.length },
@@ -565,6 +580,8 @@ export class Game implements GameApi {
 
       // 首季长度随机抽取（10~15 轮，此后每季重新抽取，无法预判）
       s.seasonLen = this.rng.int(SEASON_LEN_MIN, SEASON_LEN_MAX)
+      // 首季同样触发季节事件（旧实现只在 advanceSeason 里调用，开局第一季永远没有事件）
+      applySeasonEvent(this)
       s.currentPlayer = s.turnOrder[0] ?? 0
       await this.runMainLoop()
     } catch (e) {
@@ -573,15 +590,18 @@ export class Game implements GameApi {
     }
   }
 
-  /** 主循环：1 轮 = 全部存活玩家各行动一次；季节按轮数随机更替，灾害每轮触发一次，囚徒困境每 5 轮 */
+  /** 主循环：1 轮 = 全部存活玩家各行动一次；季节按轮数随机更替，灾害每轮触发一次 */
   private async runMainLoop(): Promise<void> {
     const s = this.state
     while (this.aliveCount() > 1 && s.winner === null && s.turn < MAX_TURNS && !this.stopped) {
       // 新一轮开始
       s.round++
       s.totalRound++
-      s.seasonTurn = s.round
-      if (s.round > s.seasonLen) await this.advanceSeason()
+      if (s.round > s.seasonLen) {
+        await this.advanceSeason()   // 内部把 round/seasonTurn 置为 1（新季节首轮）
+      } else {
+        s.seasonTurn = s.round
+      }
       // 市场供给压力结算：上轮净卖出量压价后清零
       settleMarketPressure(this)
 
@@ -592,6 +612,10 @@ export class Game implements GameApi {
           s.market[res] = Math.round(s.market[res] * climatePrice)
         }
       }
+
+      // 市场价格每轮只更新一次：随机游走 + 均值回归。旧实现按玩家行动更新，
+      // 4~8 人局里同一轮价格会跳 4~8 次，玩家无法判断「什么时候卖」。
+      updateMarket(this)
 
       // 每轮一次的灾害与事件链
       await updateDisasters(this)
@@ -620,6 +644,13 @@ export class Game implements GameApi {
       // （读档恢复用的轮转逻辑），会造成上轮最后行动的玩家连续行动两次——末尾连续两轮都是自己
       s.currentPlayer = s.turnOrder[0] ?? 0
 
+      // 轮末：终局经济危机按「轮」结算（旧实现放在每个玩家的 endTurn 里，
+      // 2 人终局每 5 个行动就缩水一次，实际是 2.5 轮而非文案的 5 轮）
+      if (s.winner === null && !this.stopped) await checkCrisis(this)
+
+      // 轮末：全局修正按轮衰减（卡牌/事件链/季节事件）
+      this.decayRoundMods()
+
       // 轮末：游说效果与举报保护期按轮衰减
       for (const p of s.players) {
         if (p.status.antitrustTurns > 0) {
@@ -629,24 +660,29 @@ export class Game implements GameApi {
         if (p.status.reportCooldown > 0) p.status.reportCooldown--
       }
 
-      // 轮末：囚徒困境（每 5 轮按全局总轮数计；前 10 轮保护期不触发，文档 9.4）
-      if (s.winner === null && this.aliveCount() > 1 && !this.stopped && s.totalRound > SAFE_TURNS && s.totalRound % DILEMMA_EVERY === 0) {
-        await runDilemma(this)
-      }
-
       // 轮末 GDP 统计：与上轮对比，顶栏箭头显示涨跌
       s.gdpPrev = s.gdp
       s.gdp = this.gdpNow()
       this.updateClimate()
       this.markChanged()
     }
+    // 主动停止（返回主菜单）：不要伪造胜者/终局事件
+    if (this.stopped) return
+    const alive = s.players.filter(p => p.alive)
     if (s.winner === null) {
-      const winner = s.players.filter(p => p.alive).sort((a, b) => totalValue(this, b.id) - totalValue(this, a.id))[0]
+      const winner = [...alive].sort((a, b) => totalValue(this, b.id) - totalValue(this, a.id))[0]
       s.winner = winner?.id ?? 0
+      // 行动数达到上限：按总资产判定；否则是最后一人（非当前玩家破产时不会经过 endTurn 的胜者登记）
+      s.endReason = s.turn >= MAX_TURNS ? 'timeout' : (alive.length === 1 ? 'last-standing' : null)
+    } else {
+      // 垄断判决时通常仍有多名玩家存活；淘汰至只剩一人则是最后生还
+      s.endReason = alive.length > 1 ? 'monopoly' : 'last-standing'
     }
     s.phase = 'gameover'
     const winner = s.players[s.winner]
-    this.log(`游戏结束！「${winner.name}」获胜！`)
+    const reasonText = s.endReason === 'timeout' ? '（行动数达到上限，按总资产判定）'
+      : s.endReason === 'monopoly' ? '（垄断判决）' : ''
+    this.log(`游戏结束！「${winner.name}」获胜！${reasonText}`)
     this.sfx('win')
     this.emit('game-over', s.winner)
     this.markChanged()
@@ -695,6 +731,19 @@ export class Game implements GameApi {
     }
   }
 
+  /** 轮末衰减全局修正（租金/过路费/修理费/产出/价格）：每轮只减一次，与玩家数量无关 */
+  private decayRoundMods(): void {
+    const s = this.state
+    const decay = <T extends { turns: number }>(arr: T[]): T[] =>
+      arr.filter(m => { m.turns--; return m.turns > 0 })
+    s.rentMods = decay(s.rentMods)
+    s.bridgeTollMods = decay(s.bridgeTollMods)
+    s.repairMods = decay(s.repairMods)
+    s.outputModAll = decay(s.outputModAll)
+    s.outputModsRes = decay(s.outputModsRes)
+    s.priceMods = decay(s.priceMods)
+  }
+
   /** 行动顺序中 id 之后的下一位存活玩家（用于存档边界） */
   private nextPlayerAfter(id: number): number {
     const s = this.state
@@ -713,8 +762,10 @@ export class Game implements GameApi {
     const idx = SEASON_ORDER.indexOf(s.season)
     s.season = SEASON_ORDER[(idx + 1) % SEASON_ORDER.length]
     if (s.season === 'spring') s.year++
-    s.round = 0
-    s.seasonTurn = 0
+    // 换季发生在「新季节第 1 轮」的开头；直接置 1，避免显示「本季第 0/N 回合」
+    // 以及每季多打一轮（旧实现先置 0、由调用方之后才加到 1，首轮被重复计数）。
+    s.round = 1
+    s.seasonTurn = 1
     s.seasonLen = this.rng.int(SEASON_LEN_MIN, SEASON_LEN_MAX)
     resetSeasonEvent(this)
     applySeasonEvent(this)
@@ -743,6 +794,8 @@ export class Game implements GameApi {
 
   /** 从存档恢复：状态整体替换，从主循环继续（当前行动者重新开始其回合） */
   restore(json: string): void {
+    // 先初始化主随机源：旧存档缺少 aiBrains 时，下方兜底 createBrains 需要 this.rng
+    this.rng = new RNG()
     const saved = JSON.parse(json) as GameState
     // 旧版本存档缺字段兜底
     saved.round = saved.round ?? 0
@@ -754,8 +807,13 @@ export class Game implements GameApi {
     saved.seasonTurn = saved.seasonTurn ?? 0
     saved.aiDifficulty = (saved.aiDifficulty ?? 'normal') as AiDifficulty
     saved.firstBankruptTurn = saved.firstBankruptTurn ?? null
+    saved.endReason = saved.endReason ?? null
     saved.marketPressure = saved.marketPressure ?? { wood: 0, beef: 0, oil: 0, fish: 0 }
     saved.ops = saved.ops ?? { ...TURN_OP_LIMITS }
+    // v1.0.2 前存档是单个 casinoBet 槽位：迁移为数组，避免读档丢注
+    const legacyBet = (saved as GameState & { casinoBet?: CasinoBet | null }).casinoBet
+    saved.casinoBets = saved.casinoBets ?? (legacyBet ? [legacyBet] : [])
+    delete (saved as Partial<GameState> & { casinoBet?: CasinoBet | null }).casinoBet
     if (!saved.aiBrains || saved.aiBrains.length !== saved.players.length) {
       saved.aiBrains = createBrains(saved.players, saved.aiDifficulty, this.rng)
     }
@@ -779,6 +837,33 @@ export class Game implements GameApi {
     this.state.climateTurns = this.state.climateTurns ?? 0
     this.state.recessionStreak = this.state.recessionStreak ?? 0
     this.state.roadblock = this.state.roadblock ?? null
+    // 旧存档的台风没有轨迹 / 减弱字段：补齐，避免读档后轨迹为空或无法消散
+    if (this.state.typhoon) {
+      const t = this.state.typhoon as TyphoonState & { seaIndex?: number; dir?: number; predicted?: number }
+      // 旧存档只有固定航线索引：迁移成真实海面坐标，之后按新自由路径继续
+      if (!Number.isFinite(t.x) || !Number.isFinite(t.y)) {
+        const n = SEA_POINTS.length
+        const legacy = Math.max(0, Math.min(n - 1, (t.seaIndex ?? 0) | 0))
+        const sp = SEA_POINTS[legacy]
+        t.x = sp.x
+        t.y = sp.y
+      }
+      if (!Number.isFinite(t.targetTile)) t.targetTile = nearestCoast(t.x, t.y).tile
+      if (!Number.isFinite(t.heading)) {
+        const p = LAYOUT[t.targetTile] ?? LAYOUT[nearestCoast(t.x, t.y).tile]
+        t.heading = Math.atan2(p.y - t.y, p.x - t.x)
+      }
+      t.coastal = t.coastal ?? false
+      t.predictedX = Number.isFinite(t.predictedX) ? (t.predictedX as number) : null
+      t.predictedY = Number.isFinite(t.predictedY) ? (t.predictedY as number) : null
+      t.weakening = t.weakening ?? false
+      t.fading = t.fading ?? false
+      if (t.onLand && t.landTile !== null) {
+        t.x = LAYOUT[t.landTile].x
+        t.y = LAYOUT[t.landTile].y
+      }
+      if (!Array.isArray(t.path) || t.path.length === 0) t.path = [{ x: t.x, y: t.y }]
+    }
     this.state.started = true
     this.state.phase = 'spin'
     this.state.wheelResult = null
@@ -814,7 +899,6 @@ export class Game implements GameApi {
         aggression: 0.3 + this.rng.float(0, 0.7),
         greed: 0.3 + this.rng.float(0, 0.7),
       },
-      dilemmaMem: {},
       stats: {
         earned: 0, spent: 0, rentPaid: 0, rentCollected: 0, timesBankrupt: 0,
         resourceIncome: 0, startBonus: 0, bankIn: 0, bankOut: 0, tileSpent: 0, buildSpent: 0,
@@ -871,9 +955,6 @@ export class Game implements GameApi {
     s.phase = 'spin'
     s.wheelResult = null
 
-    // 市场波动
-    updateMarket(this)
-
     if (!p.alive || this.stopped) return
 
     // 转盘
@@ -886,11 +967,14 @@ export class Game implements GameApi {
     }
     if (!p.alive || this.stopped) return
 
-    // 赌场下注结算
-    if (s.casinoBet && s.casinoBet.player === p.id) {
-      this.resolveCasino(p)
+    // 赌场下注结算：只结算/清理本玩家的注（其他玩家尚未到回合的注必须保留，
+    // 旧实现无条件清空 casinoBet，导致除最后下注者外所有赌注永远不结算）
+    if (s.casinoBets.length) {
+      for (const bet of s.casinoBets.filter(b => b.player === p.id)) this.resolveCasino(p, bet)
+      s.casinoBets = s.casinoBets.filter(b =>
+        b.player !== p.id && !!s.players[b.player]?.alive,
+      )
     }
-    s.casinoBet = null
 
     // 空仓格：原地 + 机会卡
     let steps = s.wheelResult + p.status.moveMod
@@ -902,12 +986,14 @@ export class Game implements GameApi {
       }
     } else {
       s.phase = 'move'
+      this.markChanged()   // 阶段切换只需刷新一次 UI；逐格刷新由 piece-step 事件驱动
       await this.doMove(p, steps)
       if (!p.alive || this.stopped) return
       s.phase = 'landing'
+      this.markChanged()
       await this.resolveLanding(p)
     }
-    if (!p.alive || this.stopped) return
+    if (!p.alive || this.stopped || s.winner !== null) return
 
     // 行动阶段（全体玩家操作配额重置：建造 1 / 升级 1 / 修理 1 / 勘探 1 / 修桥 1）
     s.ops = { ...TURN_OP_LIMITS }
@@ -917,7 +1003,7 @@ export class Game implements GameApi {
     } else {
       await aiAct(this, p.id)
     }
-    if (!p.alive || this.stopped) return
+    if (!p.alive || this.stopped || s.winner !== null) return
 
     // 回合结束
     await this.endTurn(p)
@@ -964,9 +1050,12 @@ export class Game implements GameApi {
           if (toll > 0 && steps - i - 1 >= 3 && s.season === 'winter') {
             const bypass = await this.askBridgeCross(p, bridgeIdx, toll)
             if (bypass) {
+              const from = p.pos
               p.pos = bridgeIdx + 1
               i += 2   // 绕行共走 3 步（本步 + 额外 2 步）
-              this.log(`「${p.name}」踏冰绕行避开「${bridge.name}」，免交过路费 ${toll}（多花 3 步）`, p.id)
+              // 先发动画事件：渲染层立刻进入 animating，随后 log 触发的 syncAll 才不会把棋子瞬移到对岸
+              this.emit('bridge-bypass', { playerId: p.id, from, to: p.pos, bridge: bridgeIdx })
+              this.log(`「${p.name}」踏冰绕行避开「${bridge.name}」，免交过路费 ${toll}（绕行 3 步，多花 1 步）`, p.id)
               this.emit('float', { tile: bridgeIdx, text: '🧊 踏冰绕行', color: '#a8d8ff' })
               this.sfx('ding')
             }
@@ -982,7 +1071,9 @@ export class Game implements GameApi {
         }
       }
       this.emit('piece-step', { playerId: p.id, pos: p.pos })
-      this.markChanged()
+      // 注意：此处不调用 markChanged。piece-step 事件已驱动 Phaser 场景更新棋子层；
+      // 跨步真正改变状态的位置（过路费 / 起点奖励 / 路障）都通过 log() → markChanged 自行触发。
+      // 每步多调一次会导致 store.structuredClone 整 GameState 12 次/移动，是移动端卡顿主因。
       await this.sleep(stepMs)
     }
   }
@@ -1015,15 +1106,20 @@ export class Game implements GameApi {
     // 地块浮动提示：付款方绿字、收款方红字（错位显示避免重叠）
     this.emit('float', { tile: tile.index, text: `-${toll}`, color: '#7fe07a' })
     this.emit('float', { tile: tile.index, text: `+${toll}`, color: '#ff5f4d', offsetY: -64 })
-    // 股份分成
+    // 股份分成：桥主现金不足时跳过分成，避免 owner.cash 扣成负数；双方均记 stats
     const shareholders = s.players.filter(x =>
       x.alive && x.id !== tile.owner &&
       x.status.bridgeShare.some(sh => sh.bridge === tile.index && sh.turns > 0),
     )
     for (const sh of shareholders) {
       const cut = Math.round(toll * 0.3)
+      if (owner.cash < cut) continue
       owner.cash -= cut
       sh.cash += cut
+      // 股份分成是玩家间转移而非银行发放：只调整租金归属统计。
+      // 旧实现记入 bankIn/bankOut，会让 GDP 口径把这笔转移误当成印钞扣掉。
+      owner.stats.rentCollected -= cut
+      sh.stats.rentCollected += cut
       this.log(`「${sh.name}」分得「${tile.name}」过路费 ${cut}（桥梁股份）`, sh.id)
     }
   }
@@ -1035,22 +1131,25 @@ export class Game implements GameApi {
     return bonus
   }
 
-  private resolveCasino(p: Player): void {
+  private resolveCasino(p: Player, bet: CasinoBet): void {
     const s = this.state
-    const bet = s.casinoBet!
     const r = s.wheelResult as number
     let win: boolean
     if (r === 0) win = false
     else if (bet.choice === 'big') win = r >= 7
     else win = r <= 6
     if (win) {
-      const payout = bet.amount * 2
-      p.cash += payout
-      p.stats.earned += payout
-      this.log(`赌场：「${p.name}」押${bet.choice === 'big' ? '大' : '小'} ${bet.amount}，转到 ${r}，赢得 ${payout}！`, p.id)
+      // 押注本金已在 casino 弹窗落地时扣除；这里只补齐净收益（赢得 2 倍 = 本金 1 倍 + 净利润 1 倍）
+      const profit = bet.amount
+      p.cash += profit
+      p.stats.earned += profit
+      // 赌场净盈利来自银行：计入 bankIn，GDP 口径才能扣掉这笔无中生有的钱
+      p.stats.bankIn += profit
+      this.log(`赌场：「${p.name}」押${bet.choice === 'big' ? '大' : '小'} ${bet.amount}，转到 ${r}，赢得 ${profit}！`, p.id)
       this.sfx('dice')
       this.sfx('win')
     } else {
+      // 输：本金已在落地时扣除，无需再扣；否则会扣两次（"庄家通吃"原本是只吃掉已扣本金）
       this.log(`赌场：「${p.name}」押${bet.choice === 'big' ? '大' : '小'} ${bet.amount}，转到 ${r}，庄家通吃！`, p.id)
       this.sfx('dice')
       this.sfx('lose')
@@ -1119,7 +1218,10 @@ export class Game implements GameApi {
           type: 'casino', player: p.id, cash: p.cash,
         })
         if (!ans?.skip && ans.bet && ans.choice && ans.bet <= p.cash) {
-          s.casinoBet = { player: p.id, amount: ans.bet, choice: ans.choice }
+          p.cash -= ans.bet            // 押注即时扣款（输赢都基于已扣本金结算；下注时 BetModal 内部已校验输入合法）
+          p.stats.spent += ans.bet
+          p.stats.bankOut += ans.bet   // 本金流入庄家（银行）
+          s.casinoBets.push({ player: p.id, amount: ans.bet, choice: ans.choice })
           this.log(`「${p.name}」在赌场下注 ${ans.bet}，押${ans.choice === 'big' ? '大' : '小'}`, p.id)
         }
         break
@@ -1161,6 +1263,9 @@ export class Game implements GameApi {
           }
           this.log(`「${p.name}」在起点以 8 折修理了所有受损建筑（-${repairTotal}）`, p.id)
           this.sfx('build')
+        } else if (ans === 'repair') {
+          // 兜底：UI 已禁用不可支付的修理按钮；若仍收到请求，明确提示而不是静默无反应
+          this.log(`「${p.name}」现金不足，无法支付起点修理费 ￥${repairTotal}`, p.id)
         } else if (ans === 'rest') {
           p.status.moveMod -= 1
           this.log(`「${p.name}」在起点小屋休息，下回合移动 -1`, p.id)
@@ -1211,11 +1316,10 @@ export class Game implements GameApi {
     st.rentBonus = st.rentBonus.filter(m => { m.turns--; return m.turns > 0 })
     st.bridgeShare = st.bridgeShare.filter(sh => { sh.turns--; return sh.turns > 0 })
 
-    s.rentMods = s.rentMods.filter(m => { m.turns--; return m.turns > 0 })
-    s.bridgeTollMods = s.bridgeTollMods.filter(m => { m.turns--; return m.turns > 0 })
-    s.repairMods = s.repairMods.filter(m => { m.turns--; return m.turns > 0 })
-    s.outputModAll = s.outputModAll.filter(m => { m.turns--; return m.turns > 0 })
-    s.outputModsRes = s.outputModsRes.filter(m => { m.turns--; return m.turns > 0 })
+    // 全局修正不在此衰减：它们按「轮」计时（见 runMainLoop 轮末 decayRoundMods），
+    // 旧实现放在每个玩家的 endTurn 里，会让同一条「持续 2 回合」的全局效果
+    // 在 4~8 人局中只持续 1/4~1/8 轮，且强度随人数漂移。
+    // 个人状态（产出/租金加成、免过路费、桥梁股份）仍按「自己的回合」衰减。
 
     // 投机资源结算
     for (const spec of [...s.speculation]) {
@@ -1228,8 +1332,11 @@ export class Game implements GameApi {
           units: spec.units, price: s.market[spec.resource],
         })
         if (res?.sell && p.alive) {
-          const income = Math.round(spec.units * s.market[spec.resource])
-          p.resources[spec.resource] -= Math.min(spec.units, p.resources[spec.resource])
+          // 按"实际卖出量"结算：若玩家中途被偷/抛售导致实际持有 < 申报量，只能卖出持有的部分
+          // 避免先前"按 spec.units 全额付钱"导致的印钞漏洞
+          const sellUnits = Math.min(spec.units, p.resources[spec.resource])
+          const income = Math.round(sellUnits * s.market[spec.resource])
+          p.resources[spec.resource] -= sellUnits
           p.cash += income
           p.stats.earned += income
           this.log(`「${p.name}」按市价卖出投机资源，获利 ${income}`, p.id)
@@ -1238,9 +1345,6 @@ export class Game implements GameApi {
         }
       }
     }
-
-    // 终局危机
-    await checkCrisis(this)
 
     // 胜利检查
     if (this.aliveCount() === 1 && s.winner === null) {

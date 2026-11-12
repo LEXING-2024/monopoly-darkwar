@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { backToMenu, saveGame, store, toggleMute } from '../store'
-import { RESOURCES, RESOURCE_ORDER, SEASONS } from '../../core/config'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { backToMenu, saveGame, setVolume, store, toggleMute } from '../store'
+import {
+  RENT_STALL_MAX, RENT_STALL_PER_ROUND, RENT_STALL_START,
+  RESOURCES, RESOURCE_ORDER, SEASONS,
+} from '../../core/config'
+import Icon from './Icon.vue'
 
 const emit = defineEmits<{ (e: 'open-help'): void }>()
 
 const s = computed(() => store.state)
 const current = computed(() => s.value?.players[s.value.currentPlayer] ?? null)
 const season = computed(() => (s.value ? SEASONS[s.value.season] : null))
+const seasonIcon = computed(() => s.value?.season ?? 'spring')
 const typhoon = computed(() => s.value?.typhoon ?? null)
 const chains = computed(() => s.value?.chains ?? [])
 
@@ -29,12 +34,22 @@ const fmtMoney = (n: number): string => Math.round(n).toLocaleString()
 
 // 景气状态展示（每轮末按 GDP 涨跌评估；危机持续 5 轮）
 const CLIMATE_UI: Record<string, { name: string; icon: string; cls: string; tip: string }> = {
-  boom: { name: '繁荣', icon: '📈', cls: 'cl-boom', tip: '资源价格 +10%、租金 +10%、建筑费用 -10%' },
-  normal: { name: '正常', icon: '☀️', cls: 'cl-normal', tip: '经济平稳，无修正' },
-  recession: { name: '衰退', icon: '📉', cls: 'cl-recession', tip: '资源价格 -10%、租金 -10%、建筑费用 +10%' },
-  crisis: { name: '危机', icon: '🚨', cls: 'cl-crisis', tip: '灾害概率 +5%、过路费 -20%' },
+  boom: { name: '繁荣', icon: 'arrowUp', cls: 'cl-boom', tip: '资源价格 +10%、租金 +10%、建筑费用 -10%' },
+  normal: { name: '正常', icon: 'summer', cls: 'cl-normal', tip: '经济平稳，无修正' },
+  recession: { name: '衰退', icon: 'arrowDown', cls: 'cl-recession', tip: '资源价格 -10%、租金 -10%、建筑费用 +10%' },
+  crisis: { name: '危机', icon: 'alert', cls: 'cl-crisis', tip: '灾害概率 +5%、过路费 -20%' },
 }
 const climateUi = computed(() => (s.value ? CLIMATE_UI[s.value.climate] : null))
+
+// 反僵持租金加成：对局拖长后从第 START 轮起逐步上涨，顶栏明示当前幅度
+const rentStallPct = computed(() => {
+  if (!s.value) return 0
+  const bonus = Math.min(
+    RENT_STALL_MAX,
+    Math.max(0, (s.value.totalRound - RENT_STALL_START) * RENT_STALL_PER_ROUND),
+  )
+  return Math.round(bonus * 100)
+})
 
 // 市场行情（紧凑显示于顶栏）：价格相对基准的涨跌
 function trend(res: (typeof RESOURCE_ORDER)[number]): string {
@@ -54,99 +69,142 @@ const myTurn = computed(() =>
 
 // 返回首页二次确认
 const confirmHome = ref(false)
+let confirmHomeTimer: ReturnType<typeof setTimeout> | null = null
 function onHome(): void {
   if (!confirmHome.value) {
     confirmHome.value = true
-    setTimeout(() => { confirmHome.value = false }, 3000)
+    if (confirmHomeTimer) clearTimeout(confirmHomeTimer)
+    confirmHomeTimer = setTimeout(() => {
+      confirmHome.value = false
+      confirmHomeTimer = null
+    }, 3000)
     return
   }
   backToMenu()
 }
+onBeforeUnmount(() => {
+  if (confirmHomeTimer) { clearTimeout(confirmHomeTimer); confirmHomeTimer = null }
+})
 
-// 手机端：常用按钮折叠为一个「☰」，点开展开其余选择（节省顶栏空间）
+// 手机端：常用按钮折叠为一个「菜单」，点开展开其余选择（节省顶栏空间）
 const menuOpen = ref(false)
 // 市场行情详情弹层（点击市场条展开，点外部关闭）
 const marketOpen = ref(false)
+
+function onVolume(e: Event): void {
+  const input = e.target as HTMLInputElement
+  setVolume(Number(input.value) / 100)
+}
 </script>
 
 <template>
   <header class="topbar">
+    <div class="brand" v-if="s" aria-label="大富翁·暗战">
+      <span class="brand-seal">暗</span>
+      <span class="brand-word">商路<em>暗战</em></span>
+    </div>
     <div class="top-left">
-      <span class="season-chip" v-if="s">
-        {{ season?.icon }} 第{{ s.year }}年 · {{ season?.name }}季
-        <span class="season-turn">本季第 {{ s.seasonTurn }}/{{ s.seasonLen }} 回合</span>
+      <span class="chip season-chip" v-if="s">
+        <Icon :name="seasonIcon" :size="14" />
+        <span>第{{ s.year }}年 · {{ season?.name }}季</span>
+        <span class="season-turn">本季 {{ s.seasonTurn }}/{{ s.seasonLen }} 回合</span>
       </span>
-      <span class="round-chip" v-if="s" title="1 回合 = 全部存活玩家各行动一次">
+      <span class="chip round-chip" v-if="s" title="1 回合 = 全部存活玩家各行动一次">
         第 <b>{{ s.totalRound ?? s.round }}</b> 回合
       </span>
       <span
         v-if="s" class="chip gdp-chip"
         :title="`GDP：全体存活玩家总资产（扣除起点奖励/卡牌补贴等无偿发放），较上轮 ${gdpTrend.delta >= 0 ? '+' : ''}￥${fmtMoney(gdpTrend.delta)}`"
-      >GDP ￥{{ fmtMoney(s.gdp) }} <b :class="gdpTrend.cls">{{ gdpTrend.arrow }}<span v-if="gdpPctText" class="gdp-pct"> {{ gdpPctText }}</span></b></span>
+      ><Icon name="coin" :size="13" /> GDP ￥{{ fmtMoney(s.gdp) }}
+        <b class="gdp-arrow" :class="gdpTrend.cls">{{ gdpTrend.arrow }}<span v-if="gdpPctText" class="gdp-pct"> {{ gdpPctText }}</span></b>
+      </span>
       <span
         v-if="climateUi" class="chip climate-chip" :class="climateUi.cls" :title="climateUi.tip"
-      >{{ climateUi.icon }} {{ climateUi.name }}<template v-if="s?.climate === 'crisis'"> · 剩{{ s.climateTurns }}轮</template></span>
-      <span v-if="s?.phase === 'order'" class="chip order-chip">🎲 决定行动顺序中</span>
-      <span v-if="s?.endgame" class="chip warn">⚔️ 终局对决</span>
-      <span v-if="typhoon" class="chip typhoon">🌀 台风 {{ typhoon.onLand ? '已登陆' : `${typhoon.strength}级` }}</span>
+      ><Icon :name="climateUi.icon" :size="13" /> {{ climateUi.name }}<template v-if="s?.climate === 'crisis'"> · 剩{{ s.climateTurns }}轮</template></span>
+      <span v-if="s?.phase === 'order'" class="chip order-chip"><Icon name="dice" :size="13" /> 决定行动顺序中</span>
       <span
-        v-for="c in chains" :key="c.id + c.turnsLeft"
+        v-if="rentStallPct > 0" class="chip stall-chip"
+        :title="`对局拖长后市场租金逐步上涨（反僵持机制：第 ${RENT_STALL_START} 轮起每轮 +${(RENT_STALL_PER_ROUND * 100).toFixed(1)}%，上限 +${RENT_STALL_MAX * 100}%）：当前全部租金 +${rentStallPct}%`"
+      ><Icon name="flame" :size="13" /> 租金 +{{ rentStallPct }}%</span>
+      <span v-if="s?.endgame" class="chip warn"><Icon name="flag" :size="13" /> 终局对决</span>
+      <span v-if="typhoon" class="chip typhoon">台风 {{ typhoon.onLand ? '已登陆' : `${typhoon.strength}级` }}</span>
+      <span
+        v-for="(c, ci) in chains" :key="`${c.id}:${ci}`"
         class="chip chain" :title="c.desc"
-      >⏳ {{ c.name }}<span class="chain-left"> · 剩{{ c.turnsLeft }}回合</span></span>
+      ><Icon name="hourglass" :size="13" /> {{ c.name }}<span class="chain-left"> · 剩{{ c.turnsLeft }}回合</span></span>
       <span
         v-if="s?.seasonEvent"
         class="chip season-event-chip"
         :title="s.seasonEvent.desc"
-      >🍀 {{ s.seasonEvent.name }}</span>
+      ><Icon name="spring" :size="13" /> {{ s.seasonEvent.name }}</span>
     </div>
     <div class="top-market" v-if="s" title="市场行情（点击查看详情）" @click="marketOpen = !marketOpen">
-      <span class="market-label">📈</span>
+      <span class="market-label"><Icon name="trade" :size="14" /></span>
       <span
         v-for="res in RESOURCE_ORDER" :key="res"
         class="market-item"
-        :class="{ up: trend(res) === '↑', down: trend(res) === '↓' }"
-      >{{ RESOURCES[res].icon }}<span class="m-price">￥{{ s.market[res] }}</span>{{ trend(res) }}</span>
-      <!-- 点击展开：完整价格明细（手机端价格内联隐藏，点这里看具体信息） -->
+        :class="[`res-${res}`, { up: trend(res) === '↑', down: trend(res) === '↓' }]"
+      ><span class="res-chip"><Icon :name="res" :size="13" /></span><span class="m-price">￥{{ s.market[res] }}</span><b class="market-trend" :class="{ up: trend(res) === '↑', down: trend(res) === '↓' }">{{ trend(res) }}</b></span>
       <div v-if="marketOpen" class="market-backdrop" @click.stop="marketOpen = false"></div>
       <div v-if="marketOpen" class="market-pop">
-        <div class="mp-title">📈 市场行情</div>
+        <div class="mp-title"><Icon name="trade" :size="14" /> 市场行情</div>
         <div v-for="res in RESOURCE_ORDER" :key="'p' + res" class="mp-row">
-          <span>{{ RESOURCES[res].icon }} {{ RESOURCES[res].name }}</span>
-          <span :class="{ up: trend(res) === '↑', down: trend(res) === '↓' }">￥{{ s.market[res] }} {{ trend(res) }}</span>
+          <span><span class="res-chip" :class="`res-${res}`"><Icon :name="res" :size="13" /></span> {{ RESOURCES[res].name }}</span>
+          <span class="mp-val" :class="{ up: trend(res) === '↑', down: trend(res) === '↓' }">￥{{ s.market[res] }} <b class="mp-trend">{{ trend(res) }}</b></span>
         </div>
-        <div class="mp-hint">相对基准价 ±12% 显示涨跌</div>
+        <div class="mp-hint">相对基准价 ±12% 显示涨跌 · 红涨绿跌</div>
       </div>
     </div>
     <div class="top-right">
-      <span v-if="store.saveToast" class="save-toast">💾 {{ store.saveToast }}</span>
-      <span v-if="myTurn" class="your-turn">▶ 轮到你行动！</span>
+      <span v-if="store.saveToast" class="save-toast"><Icon name="save" :size="13" /> {{ store.saveToast }}</span>
+      <span v-if="myTurn" class="your-turn"><Icon name="chevron" :size="13" /> 轮到你行动！</span>
       <span
         v-if="current" class="chip player"
         :style="{ background: current.color, color: '#fff' }"
       >{{ current.name }} {{ current.isAI ? '(AI)' : '' }}</span>
       <div class="desktop-actions">
-        <button class="icon-btn" @click="saveGame" title="保存对局（当前回合结束后存档）">💾</button>
+        <label class="volume-control" title="主音量">
+          <Icon name="volume" :size="15" />
+          <input
+            class="volume-slider" type="range" min="0" max="100" step="1"
+            :value="Math.round(store.volume * 100)" @input="onVolume"
+            aria-label="主音量"
+          />
+        </label>
+        <button class="icon-btn" @click="saveGame" title="保存对局（当前回合结束后存档）"><Icon name="save" :size="16" /></button>
         <button class="icon-btn" :class="{ danger: confirmHome }" @click="onHome" title="返回首页">
-          {{ confirmHome ? '确认返回？' : '🏠' }}
+          <template v-if="confirmHome"><span class="confirm-word">返回？</span></template>
+          <Icon v-else name="home" :size="16" />
         </button>
         <button class="icon-btn" @click="toggleMute" :title="store.muted ? '开启音效' : '静音'">
-          {{ store.muted ? '🔇' : '🔊' }}
+          <Icon :name="store.muted ? 'mute' : 'volume'" :size="16" />
         </button>
-        <button class="icon-btn" @click="emit('open-help')" title="规则说明">❓</button>
+        <button class="icon-btn" @click="emit('open-help')" title="规则说明"><Icon name="help" :size="16" /></button>
       </div>
       <!-- 手机端：折叠为一个菜单按钮，点开展开其余选择；点菜单外任意处关闭 -->
       <div class="mobile-menu">
-        <button class="icon-btn menu-toggle" @click="menuOpen = !menuOpen" title="菜单">☰</button>
+        <button class="icon-btn menu-toggle" @click="menuOpen = !menuOpen" title="菜单"><Icon name="menu" :size="17" /></button>
         <div v-if="menuOpen" class="menu-backdrop" @click="menuOpen = false"></div>
         <div v-if="menuOpen" class="menu-pop">
-          <button class="menu-item" @click="saveGame(); menuOpen = false">💾 保存对局</button>
+          <button class="menu-item" @click="saveGame(); menuOpen = false"><Icon name="save" :size="15" /> 保存对局</button>
           <button class="menu-item" :class="{ danger: confirmHome }" @click="onHome">
-            {{ confirmHome ? '⚠️ 确认返回？' : '🏠 返回首页' }}
+            <Icon name="alert" :size="15" v-if="confirmHome" /><Icon name="home" :size="15" v-else />
+            {{ confirmHome ? '确认返回？' : '返回首页' }}
           </button>
           <button class="menu-item" @click="toggleMute">
-            {{ store.muted ? '🔇 开启音效' : '🔊 静音' }}
+            <Icon :name="store.muted ? 'volume' : 'mute'" :size="15" />
+            {{ store.muted ? '开启音效' : '静音' }}
           </button>
-          <button class="menu-item" @click="emit('open-help'); menuOpen = false">❓ 规则说明</button>
+          <label class="menu-volume">
+            <Icon name="volume" :size="15" />
+            <span>音量</span>
+            <input
+              class="volume-slider" type="range" min="0" max="100" step="1"
+              :value="Math.round(store.volume * 100)" @input="onVolume"
+              aria-label="主音量"
+            />
+          </label>
+          <button class="menu-item" @click="emit('open-help'); menuOpen = false"><Icon name="help" :size="15" /> 规则说明</button>
         </div>
       </div>
     </div>
@@ -155,132 +213,450 @@ const marketOpen = ref(false)
 
 <style scoped>
 .topbar {
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  padding: 8px 14px; flex-wrap: wrap;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  height: 47px;
+  min-height: 47px;
+  flex-wrap: nowrap;
+  overflow: visible;
+  background-color: var(--wood-2);
   background-image:
-    /* 木纹年轮细丝 */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='180'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.013 0.24' numOctaves='3' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncG type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncB type='linear' slope='0.5' intercept='0.03'/%3E%3CfeFuncA type='linear' slope='0.16'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='300' height='180' filter='url(%23w)'/%3E%3C/svg%3E"),
-    /* 顶部光照 */
-    radial-gradient(ellipse 70% 70% at 28% 0%, rgba(255, 236, 190, 0.13), transparent 72%),
-    /* 污渍 */
-    radial-gradient(ellipse 200px 40px at 78% 90%, rgba(10, 4, 0, 0.4), transparent 75%),
-    /* 木底色 */
-    linear-gradient(180deg, #5a3a1e, #3d2917);
-  border-bottom: 2px solid #2a1a0c;
-  color: #f5e6c8;
+    linear-gradient(180deg, rgba(255, 236, 190, 0.10), transparent 40%, rgba(0, 0, 0, 0.28)),
+    var(--tex-wood);
+  background-size: auto, 760px 760px;
+  border-bottom: 2px solid #1b0f05;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 236, 190, 0.22),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+  color: #f7e8c4;
+  position: relative;
+  z-index: 20;
 }
-.top-left, .top-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.topbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(226, 192, 112, 0.5), transparent);
+  pointer-events: none;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  min-width: 104px;
+  white-space: nowrap;
+  padding: 3px 9px 3px 4px;
+  border-radius: 9px;
+  border: 1px solid rgba(201, 162, 74, 0.55);
+  background-image:
+    linear-gradient(180deg, rgba(255, 236, 190, 0.10), rgba(0, 0, 0, 0.20)),
+    var(--tex-wood);
+  background-size: auto, 200px 200px;
+  box-shadow: inset 0 0 0 1px rgba(255, 240, 200, 0.08), 0 2px 5px rgba(0, 0, 0, 0.35);
+}
+.brand-seal {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 5px;
+  color: #f7e3c2;
+  font-size: 15px;
+  line-height: 1;
+  background: linear-gradient(160deg, #b44234, #7e2419);
+  border: 1px solid #5c170f;
+  box-shadow: inset 0 1px 0 rgba(255, 220, 190, 0.35), 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.brand-word {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  color: #f3dfb4;
+  font-size: 11px;
+  letter-spacing: 2px;
+  line-height: 1.1;
+}
+.brand-word em {
+  font-style: normal;
+  font-size: 13px;
+  color: #ffe3a2;
+  letter-spacing: 3px;
+}
+
+/* 顶栏状态：一条连续的纸带，而不是一堆独立小方块 */
+.top-left {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  gap: 0;
+  padding: 1px 5px;
+  border: 1px solid rgba(138, 95, 31, 0.72);
+  border-radius: 9px;
+  color: var(--ink);
+  background-image:
+    radial-gradient(ellipse 160px 34px at 16% 0%, rgba(255, 252, 240, 0.55), transparent 70%),
+    var(--tex-paper),
+    linear-gradient(180deg, #f9edcb, #eedaab);
+  background-size: auto, 320px 320px, auto;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 253, 244, 0.75),
+    0 1px 2px rgba(0, 0, 0, 0.30);
+}
+.top-left .chip {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 2px 8px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.top-left .chip + .chip {
+  border-left: 1px solid rgba(138, 95, 31, 0.24);
+}
+.top-left .chip :deep(.ui-icon) { color: var(--brass-3); opacity: 0.9; }
+.top-left .season-chip { color: var(--ink); font-weight: bold; }
+.top-left::-webkit-scrollbar { display: none; }
+.top-left .round-chip { color: #5a3a10; background: none; border-color: transparent; }
+.top-left .round-chip b { color: var(--seal); font-size: 14px; }
+.top-left .chip.warn,
+.top-left .chip.order-chip,
+.top-left .chip.typhoon,
+.top-left .chip.chain,
+.top-left .chip.season-event-chip,
+.top-left .chip.stall-chip,
+.top-left .climate-chip {
+  margin: 2px 3px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(138, 95, 31, 0.25);
+  background-image: none;
+}
+.top-left .chip.warn { color: #8c2a1f; background-color: rgba(176, 68, 52, 0.14); }
+.top-left .chip.order-chip { color: #6a470e; background-color: rgba(201, 155, 58, 0.18); animation: none; }
+.top-left .chip.typhoon { color: #2f6978; background-color: rgba(74, 125, 140, 0.13); }
+.top-left .chip.chain { color: #654677; background-color: rgba(122, 88, 144, 0.12); }
+.top-left .chip.season-event-chip { color: #4f6a32; background-color: rgba(95, 127, 67, 0.13); }
+.top-left .chip.stall-chip { color: #7a4a12; background-color: rgba(217, 141, 60, 0.14); }
+.top-left .climate-chip.cl-boom { color: #8e3527; background-color: rgba(217, 119, 101, 0.14); }
+.top-left .climate-chip.cl-recession { color: #41652f; background-color: rgba(147, 191, 124, 0.15); }
+.top-left .climate-chip.cl-crisis { color: #ffe8e0; background-color: #a13a2c; animation: none; }
+.top-left .climate-chip.cl-normal { color: #6a5632; background-color: rgba(228, 205, 156, 0.25); }
+
+.top-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: none; }
 .chip {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  padding: 4px 10px; border-radius: 20px; font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background-image:
+    linear-gradient(180deg, rgba(255, 250, 235, 0.92), rgba(240, 222, 180, 0.86));
+  border: 1px solid rgba(138, 95, 31, 0.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 252, 238, 0.7),
+    0 1px 2px rgba(0, 0, 0, 0.28);
+  white-space: nowrap;
 }
-.season-chip { background: rgba(255, 215, 106, 0.16); border-color: #c9a227; }
-.season-turn { opacity: 0.7; font-size: 11px; }
+.chip :deep(.ui-icon) { color: var(--brass-3); }
+.season-chip { background-image: linear-gradient(180deg, #f9e7b4, #e5c479); border-color: #9a6a22; }
+.season-turn { opacity: 0.72; font-size: 10.5px; }
 .round-chip {
-  background: rgba(255, 215, 106, 0.22);
-  border: 1.5px solid #e8c06a;
-  padding: 4px 12px; border-radius: 20px; font-size: 13.5px;
+  background-image: linear-gradient(180deg, #f7d889, #dfb44f);
+  border-color: #7c5414;
+  font-size: 12.5px;
+  font-weight: bold;
 }
-.round-chip b { font-size: 16px; color: #ffd76a; }
-.chip.warn { background: rgba(255, 80, 60, 0.2); border-color: #d94f3d; }
-/* GDP 涨跌：红涨绿跌（股市惯例） */
-.gdp-chip { background: rgba(255, 215, 106, 0.13); border-color: #c9a227; font-variant-numeric: tabular-nums; }
-.gdp-chip b { font-size: 14px; margin-left: 2px; }
-.gdp-up { color: #ff5f4d; }
-.gdp-down { color: #7fe07a; }
-.gdp-flat { color: #c9b28a; }
-.gdp-pct { font-size: 11px; opacity: 0.85; }
-/* 景气徽章：红涨绿跌（与 GDP 箭头一致） */
+.round-chip b { font-size: 15px; color: #4a2d08; font-family: var(--font-num); }
+.chip.warn {
+  background-image: linear-gradient(180deg, #d9958a, #b25a4a);
+  border-color: #6e2418;
+  color: #fff4ea;
+}
+.chip.stall-chip {
+  background-image: linear-gradient(180deg, #f3c17e, #d98d3c);
+  border-color: #8a4d15;
+}
+/* GDP 涨跌：红涨绿跌（股市惯例）。加浅色底 + 更深文字，纸带上也能一眼分辨。 */
+.gdp-chip { font-variant-numeric: tabular-nums; }
+.gdp-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 43px;
+  margin-left: 2px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+.gdp-up { color: #fff8ef; background: var(--rise); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+.gdp-down { color: #f2fff5; background: var(--fall); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18); }
+.gdp-flat { color: #6b5738; background: rgba(117, 96, 62, 0.10); }
+.gdp-pct { font-size: 10px; opacity: 0.95; font-weight: 700; }
+/* 景气徽章 */
 .climate-chip { font-weight: bold; }
-.climate-chip.cl-boom { background: rgba(255, 95, 77, 0.22); border-color: #ff5f4d; color: #ffb3a6; }
-.climate-chip.cl-normal { background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.22); }
-.climate-chip.cl-recession { background: rgba(110, 190, 110, 0.2); border-color: #7fe07a; color: #b8eab4; }
+.climate-chip.cl-boom { background-image: linear-gradient(180deg, #f2b6a8, #d97765); border-color: #8e3527; }
+.climate-chip.cl-normal { background-image: linear-gradient(180deg, #f4e6c0, #e4cd9c); }
+.climate-chip.cl-recession { background-image: linear-gradient(180deg, #c4dfb4, #93bf7c); border-color: #4f7a3d; }
 .climate-chip.cl-crisis {
-  background: rgba(200, 30, 30, 0.35); border-color: #ff4a3a; color: #ffd0c8;
-  animation: blink 1.1s ease-in-out infinite;
+  background-image: linear-gradient(180deg, #c75a4c, #8e2a1e);
+  border-color: #4d0e06;
+  color: #ffe8e0;
+  animation: blink 1.2s ease-in-out infinite;
 }
-.chip.order-chip { background: rgba(255, 215, 106, 0.2); border-color: #e8c06a; animation: blink 1.4s ease-in-out infinite; }
-.chip.typhoon { background: rgba(120, 180, 230, 0.18); border-color: #7cb8e6; }
-.chip.chain { background: rgba(200, 140, 220, 0.16); border-color: #a76ec9; }
-.season-event-chip { background: rgba(160, 210, 120, 0.16); border-color: #8fbf5f; }
+.chip.order-chip { background-image: linear-gradient(180deg, #f7d889, #dfb44f); animation: blink 1.5s ease-in-out infinite; }
+.chip.typhoon { background-image: linear-gradient(180deg, #c6dfe7, #9dc2ce); border-color: #4a7d8c; }
+.chip.chain { background-image: linear-gradient(180deg, #e0cde8, #c3a7d1); border-color: #7a5890; }
+.season-event-chip { background-image: linear-gradient(180deg, #d7e6bf, #b6d092); border-color: #5f7f43; }
 /* 顶栏市场行情：紧凑资源价格条 */
 .top-market {
-  display: flex; align-items: center; gap: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 20px; padding: 3px 10px; font-size: 12.5px;
-  margin-left: auto; cursor: pointer; position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background-image: linear-gradient(180deg, rgba(255, 250, 235, 0.92), rgba(240, 222, 180, 0.88));
+  border: 1px solid rgba(138, 95, 31, 0.7);
+  border-radius: 9px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--ink);
+  margin-left: auto;
+  cursor: pointer;
+  position: relative;
+  box-shadow: inset 0 1px 0 rgba(255, 252, 238, 0.7), 0 1px 2px rgba(0, 0, 0, 0.28);
 }
-.top-market:hover { background: rgba(255, 255, 255, 0.14); }
+.top-market:hover { filter: brightness(1.06); }
+.top-market :deep(.ui-icon) { color: var(--brass-3); }
+.market-item { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+/* 资源图标不再共用黄铜色：木/牛/油/鱼各有专属小色牌，远看也能区分 */
+.res-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid var(--res-line, rgba(138, 95, 31, 0.55));
+  background: var(--res-bg, rgba(255, 248, 226, 0.72));
+  color: var(--res-ink, var(--brass-3));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  flex: none;
+}
+.market-item.res-wood, .mp-row .res-wood { --res-ink: #2e6a3c; --res-bg: #e4efd9; --res-line: #83a873; }
+.market-item.res-beef, .mp-row .res-beef { --res-ink: #9a3a2a; --res-bg: #f6e3da; --res-line: #c98f7a; }
+.market-item.res-oil, .mp-row .res-oil { --res-ink: #494238; --res-bg: #e9e2d4; --res-line: #9e9078; }
+.market-item.res-fish, .mp-row .res-fish { --res-ink: #17697a; --res-bg: #d9eef0; --res-line: #7ab4bd; }
+.market-item .res-chip :deep(.ui-icon) { color: var(--res-ink); opacity: 1; }
+.mp-row .res-chip :deep(.ui-icon) { color: var(--res-ink); opacity: 1; }
+.market-item.up { color: var(--rise-ink); }
+.market-item.down { color: var(--fall-ink); }
+.market-item .m-price { font-variant-numeric: tabular-nums; }
+.market-trend {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  margin-left: 1px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  color: #76613f;
+  background: rgba(117, 96, 62, 0.09);
+}
+.market-trend.up { color: #fff7ef; background: var(--rise); }
+.market-trend.down { color: #f3fff6; background: var(--fall); }
+.market-label { display: inline-flex; opacity: 0.8; }
 /* 行情详情弹层 */
 .market-backdrop { position: fixed; inset: 0; z-index: 30; }
 .market-pop {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
-  min-width: 180px; padding: 10px 12px;
-  background: linear-gradient(180deg, #5a3a1e, #3d2917);
-  border: 2px solid #2a1a0c; border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  min-width: 196px;
+  padding: 11px 14px;
+  color: var(--ink);
+  border: 1.5px solid var(--brass-3);
+  border-radius: 11px;
+  background-image:
+    radial-gradient(ellipse 120px 60px at 20% 0%, rgba(255, 250, 232, 0.4), transparent 70%),
+    var(--tex-paper),
+    linear-gradient(168deg, #f8ebc8, #ecd6a1);
+  background-size: auto, 340px 340px, auto;
+  box-shadow: var(--shadow-lg);
 }
-.mp-title { font-size: 14px; font-weight: bold; color: #ffd76a; margin-bottom: 6px; }
+.mp-title { display: flex; align-items: center; gap: 5px; font-size: 13.5px; font-weight: bold; color: #5a3a14; margin-bottom: 7px; }
 .mp-row {
-  display: flex; justify-content: space-between; gap: 14px;
-  font-size: 13.5px; padding: 3px 0; color: #f5e6c8;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 13px;
+  padding: 3px 0;
+  border-bottom: 1px dotted rgba(138, 95, 31, 0.3);
 }
-.mp-row .up { color: #ff9d8a; }
-.mp-row .down { color: #9be08a; }
-.mp-hint { margin-top: 6px; font-size: 11px; color: #b99a6a; }
-.market-label { font-size: 13px; }
-.market-item { white-space: nowrap; }
-.market-item.up { color: #ff9d8a; }
-.market-item.down { color: #9be08a; }
-.chip.player { border: none; font-weight: bold; }
+.mp-row > span:first-child { display: inline-flex; align-items: center; gap: 5px; }
+.mp-val { font-variant-numeric: tabular-nums; font-weight: 700; }
+.mp-row .up { color: var(--rise-ink); }
+.mp-row .down { color: var(--fall-ink); }
+.mp-trend {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1;
+  vertical-align: 1px;
+}
+.mp-row .up .mp-trend { color: #fff8ef; background: var(--rise); }
+.mp-row .down .mp-trend { color: #f2fff5; background: var(--fall); }
+.mp-hint { margin-top: 6px; font-size: 10.5px; color: var(--ink-3); }
+.chip.player { border: 1px solid rgba(40, 20, 4, 0.55); font-weight: bold; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45); }
 .your-turn {
-  color: #ffd76a; font-weight: bold; font-size: 14px;
-  animation: blink 1.4s ease-in-out infinite;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #ffe09a;
+  font-weight: bold;
+  font-size: 13.5px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  animation: blink 1.5s ease-in-out infinite;
 }
 .save-toast {
-  color: #b9e6a0; font-size: 13px; background: rgba(60, 120, 60, 0.35);
-  padding: 3px 10px; border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #e8f6d8;
+  font-size: 12.5px;
+  background: rgba(50, 100, 46, 0.55);
+  border: 1px solid rgba(150, 200, 130, 0.5);
+  padding: 3px 9px;
+  border-radius: 8px;
 }
 @keyframes blink { 50% { opacity: 0.45; } }
 .icon-btn {
-  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.25);
-  border-radius: 8px; padding: 3px 8px; font-size: 15px; cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  color: #f3e2bd;
+  background-image:
+    linear-gradient(180deg, rgba(255, 236, 190, 0.18), rgba(0, 0, 0, 0.12)),
+    var(--tex-wood);
+  background-size: auto, 180px 180px;
+  border: 1px solid #3a240c;
+  box-shadow: inset 0 1px 0 rgba(255, 236, 190, 0.32), 0 2px 4px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: filter 0.12s ease, transform 0.08s ease;
 }
-.icon-btn:hover { background: rgba(255,255,255,.18); }
-.icon-btn.danger { background: rgba(255, 90, 70, 0.5); border-color: #ff8a6a; }
+.icon-btn:hover { filter: brightness(1.2); }
+.icon-btn:active { transform: translateY(1px); }
+.icon-btn.danger { background-image: linear-gradient(180deg, #c46a56, #8a2f20); border-color: #5d1409; }
+/* 主音量：桌面端常驻一条窄滑杆，手机端收进菜单 */
+.volume-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 7px;
+  border-radius: 8px;
+  color: #f3e2bd;
+  background: rgba(30, 18, 6, 0.18);
+  border: 1px solid rgba(201, 162, 74, 0.35);
+}
+.volume-control :deep(.ui-icon) { color: var(--brass-3); opacity: 0.95; }
+.volume-slider {
+  width: 64px;
+  height: 16px;
+  margin: 0;
+  accent-color: #c9a24a;
+  cursor: pointer;
+}
+.menu-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  color: var(--ink);
+  font-size: 13px;
+  border: 1px solid rgba(138, 95, 31, 0.5);
+  border-radius: 7px;
+  background: rgba(255, 248, 226, 0.35);
+}
+.menu-volume :deep(.ui-icon) { color: var(--brass-3); }
+.menu-volume .volume-slider { flex: 1; width: auto; accent-color: #a5711f; }
+.confirm-word { font-size: 10px; letter-spacing: -0.5px; white-space: nowrap; }
 /* 手机端折叠菜单 */
 .mobile-menu { display: none; position: relative; }
-.menu-backdrop {
-  position: fixed; inset: 0; z-index: 30;
-}
+.menu-backdrop { position: fixed; inset: 0; z-index: 30; }
 .menu-pop {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
-  display: flex; flex-direction: column; gap: 6px; min-width: 156px;
-  padding: 8px;
-  background: linear-gradient(180deg, #5a3a1e, #3d2917);
-  border: 2px solid #2a1a0c; border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 164px;
+  padding: 9px;
+  color: var(--ink);
+  background-image:
+    radial-gradient(ellipse 120px 60px at 20% 0%, rgba(255, 250, 232, 0.4), transparent 70%),
+    var(--tex-paper),
+    linear-gradient(168deg, #f8ebc8, #ecd6a1);
+  background-size: auto, 340px 340px, auto;
+  border: 1.5px solid var(--brass-3);
+  border-radius: 11px;
+  box-shadow: var(--shadow-lg);
 }
 .menu-item {
-  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.25);
-  color: #f5e6c8; border-radius: 8px; padding: 7px 12px; font-size: 14px;
-  cursor: pointer; text-align: left; white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 248, 226, 0.35);
+  border: 1px solid rgba(138, 95, 31, 0.5);
+  color: var(--ink);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 13.5px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
 }
-.menu-item:hover { background: rgba(255,255,255,.18); }
-.menu-item.danger { background: rgba(255, 90, 70, 0.45); border-color: #ff8a6a; }
-/* 移动端（html.is-mobile 由 main.ts 设备检测标记）：
-   折叠菜单 + 顶栏精简，尽量单行放下。
-   检测信号：Capacitor 原生 / UA / 触屏指针 / 窄窗口，任一命中即启用——
-   手机横屏 CSS 宽度常超过 900px，纯宽度断点会误判成桌面 UI */
+.menu-item:hover { background: rgba(255, 250, 235, 0.6); }
+.menu-item.danger { background: rgba(180, 60, 40, 0.85); border-color: #6e1a0e; color: #fff2e8; }
+/* 移动端：折叠菜单 + 顶栏精简 */
 html.is-mobile .desktop-actions { display: none; }
 html.is-mobile .mobile-menu { display: inline-flex; }
 html.is-mobile .topbar { gap: 6px; padding: 6px 8px; }
-html.is-mobile .season-turn { display: none; }        /* 隐藏「本季第X/Y回合」小字 */
-html.is-mobile .m-price { display: none; }            /* 市场只留图标+涨跌箭头，不显示价格数字 */
-html.is-mobile .chain-left { display: none; }         /* 事件链只留名称，隐藏剩余回合 */
-html.is-mobile .chip { padding: 3px 8px; font-size: 12px; }
-html.is-mobile .round-chip { padding: 3px 9px; font-size: 12.5px; }
-html.is-mobile .top-market { padding: 2px 8px; font-size: 12px; gap: 4px; }
+html.is-mobile .season-turn { display: none; }
+html.is-mobile .m-price { display: none; }
+html.is-mobile .chain-left { display: none; }
+html.is-mobile .chip { padding: 2px 7px; font-size: 11.5px; }
+html.is-mobile .round-chip { padding: 2px 8px; font-size: 12px; }
+html.is-mobile .top-market { padding: 2px 7px; font-size: 11.5px; gap: 4px; }
+html.is-mobile .your-turn { font-size: 12px; }
 </style>

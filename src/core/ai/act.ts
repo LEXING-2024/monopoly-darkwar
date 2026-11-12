@@ -9,7 +9,6 @@ import {
 import { canBuild, levelCost, repair, repairCost } from '../buildings'
 import { bridgeRepairCost, exploreCost, tileRent } from '../economy'
 import { isMonopoly, lobby, monopolyInfo, monopolyTargets, reportMonopoly } from '../events'
-import { recordSale } from '../market'
 import { getBrain, decayBrain, incomeEstimate, terrainDependence } from './brain'
 import { brainRng, saveBrainRng } from './personality'
 import { cashSafetyLine, priceForecast, tileValue } from './score'
@@ -37,7 +36,7 @@ export async function aiAct(game: GameApi, playerId: number): Promise<void> {
   // 大脑维护：情绪冷却 → 对手建模 → 策略切换
   const brain = getBrain(s, playerId)
   if (brain) {
-    decayBrain(brain, s)
+    decayBrain(brain)
     updateOpponentModels(game, playerId)
     updateStrategy(game, brain, p)
   }
@@ -50,12 +49,12 @@ export async function aiAct(game: GameApi, playerId: number): Promise<void> {
   const myTiles = s.tiles.filter(t => t.owner === playerId)
   const safety = cashSafetyLine(game, playerId)
 
-  // 2) 建筑维护：每回合修理 ≤1 座（统一配额），仅修理受损建筑（恢复收益），花后保留缓冲
+  // 2) 建筑维护：每回合修理 ≤1 座（统一配额），仅修理受损建筑（恢复收益），花后保留安全线缓冲
   for (const t of myTiles) {
     if (s.ops.repair <= 0) break
     for (const b of [...t.buildings]) {
       if (s.ops.repair <= 0) break
-      if (b.damaged && p.cash - repairCost(game, b) >= 900) {
+      if (b.damaged && p.cash - repairCost(game, b) >= safety) {
         await game.sleep()
         game.repairAt(t.index, b.id)
       }
@@ -110,8 +109,8 @@ export async function aiAct(game: GameApi, playerId: number): Promise<void> {
         }
       }
     }
-    // 商业建筑（租金是淘汰对手的主要武器）：按基础租金选型（加入写字楼）
-    if (p.cash > 2400 && t.buildings.length < 2) {
+    // 商业建筑（租金是淘汰对手的主要武器）：每格只建 1 座，按基础租金选型
+    if (p.cash > 2400 && t.buildings.length < 2 && !t.buildings.some(b => BUILDING_DEFS[b.type]?.category === 'commercial')) {
       const comDef = t.baseRent >= 500 ? BUILDING_DEFS['mall'] : t.baseRent >= 350 ? BUILDING_DEFS['office'] : BUILDING_DEFS['apartment']
       if (!t.buildings.some(b => b.type === comDef.id) && canBuild(game, playerId, t, comDef.id).ok && s.ops.build > 0 && chance(game, brain, 0.5)) {
         await game.sleep()
@@ -125,7 +124,7 @@ export async function aiAct(game: GameApi, playerId: number): Promise<void> {
     const def = BUILDING_DEFS[tid]
     const owned = s.tiles.filter(t => t.owner === playerId && t.buildings.some(b => b.type === tid)).length
     if (def.maxPerPlayer && owned >= def.maxPerPlayer) continue
-    const slot = myTiles.find(t => t.type === 'terrain' && t.buildings.length < 2)
+    const slot = myTiles.find(t => t.type === 'terrain' && canBuild(game, playerId, t, tid).ok)
     if (!slot) continue
     const want = tid === 'weather-station' ? (s.season === 'summer' || s.typhoon) && p.cash > 2600
       : tid === 'automation' ? p.cash > 3500
@@ -268,7 +267,6 @@ function planSales(game: GameApi, playerId: number): void {
     const units = Math.floor(stock * sellFrac)
     if (units > 0) {
       game.sellResources(r, units)
-      recordSale(game, r, units)
     }
   }
 
@@ -286,7 +284,6 @@ function planSales(game: GameApi, playerId: number): void {
       const units = Math.floor(stock * 0.4)
       if (units > 0) {
         game.sellResources(r, units)
-        recordSale(game, r, units)
       }
     }
   }
@@ -298,8 +295,8 @@ function exploreGain(game: GameApi, playerId: number, t: Tile): number {
   const s = game.state
   const res = TERRAIN_RESOURCE[t.terrain as Terrain]
   if (!res) return -Infinity
-  // 勘探揭示储量：期望产出提升（富 1.6/普 1.0/贫 0.6，加权 ≈1.05） vs 勘探费
-  const gain = 1 * (1.05 - 1) * s.market[res] * 60
+  // 勘探揭示储量：期望产出提升（富 1.6/普 1.0/贫 0.6，加权 ≈1.05）× 当前地形基础产出 vs 勘探费
+  const gain = RESOURCES[res].baseOutput * (1.05 - 1) * s.market[res] * 60
   return gain - exploreCost(t)
 }
 
@@ -318,7 +315,7 @@ function bestUpgrade(game: GameApi, playerId: number, myTiles: Tile[]): { tile: 
       if (def.outputMult) {
         const res = TERRAIN_RESOURCE[t.terrain as Terrain]
         const curMult = t.buildings.reduce((a, x) => a + (BUILDING_DEFS[x.type].outputMult ?? 0) * x.level, 0)
-        gain = 1 * (def.outputMult / (1 + curMult)) * (s.market[res] ?? 100) * h
+        gain = RESOURCES[res].baseOutput * (def.outputMult / (1 + curMult)) * (s.market[res] ?? 100) * h
       }
       if (def.rentMult) {
         gain += tileRent(game, t, null) * def.rentMult * visits * h

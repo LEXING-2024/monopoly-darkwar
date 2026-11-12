@@ -31,15 +31,33 @@ export interface BuildCheck {
   reason?: string
 }
 
+/** 生成全场唯一的建筑 id：扫描现有建筑取 max+1。
+ *  旧实现用 turn*100+槽位，卡牌免费建筑用 turn*100+随机数，同一回合可能撞 id，
+ *  导致升级/修理按 id 查找时命中错误建筑。 */
+export function newBuildingId(game: GameApi): number {
+  let max = 0
+  for (const t of game.state.tiles) {
+    for (const b of t.buildings) if (b.id > max) max = b.id
+  }
+  return max + 1
+}
+
 export function canBuild(game: GameApi, playerId: number, tile: Tile, defId: string): BuildCheck {
   const def = BUILDING_DEFS[defId]
   if (!def) return { ok: false, reason: '未知建筑' }
   if (tile.owner !== playerId) return { ok: false, reason: '不是你的地块' }
   if (tile.type !== 'terrain') return { ok: false, reason: '该格不可建造' }
   if (def.terrain && tile.terrain !== def.terrain) return { ok: false, reason: '地形不符' }
-  if (def.protects === 'flood' && !FLOOD_TILES.includes(tile.index)) return { ok: false, reason: '需建在河流沿岸' }
+  if (def.protects === 'flood' && !FLOOD_TILES.includes(tile.index)) return { ok: false, reason: '需建在桥梁两侧' }
   if (tile.buildings.length >= BUILD_SLOTS) return { ok: false, reason: '建筑位已满' }
   if (tile.buildings.some(b => b.type === defId)) return { ok: false, reason: '该建筑已存在' }
+  // 两个建筑位有明确分工：1 个资源生产位 + 1 个通用建筑位（商业/防灾/科技共用）。
+  // 这样两座商业、商业+防灾都不能并存；生产 + 商业/防灾/科技仍可组合。
+  const isProduction = def.category === 'production'
+  const hasProduction = tile.buildings.some(b => BUILDING_DEFS[b.type]?.category === 'production')
+  const hasGeneral = tile.buildings.some(b => BUILDING_DEFS[b.type]?.category !== 'production')
+  if (isProduction && hasProduction) return { ok: false, reason: '每格只能建 1 座资源生产建筑' }
+  if (!isProduction && hasGeneral) return { ok: false, reason: '通用建筑位已被商业/防灾/科技占用' }
   if (def.maxPerPlayer) {
     const owned = game.state.tiles.filter(
       t => t.owner === playerId && t.buildings.some(b => b.type === defId),
@@ -65,7 +83,7 @@ export function build(game: GameApi, playerId: number, tileIndex: number, defId:
   p.cash -= cost
   p.stats.spent += cost
   p.stats.buildSpent += cost   // 金钱流向观测
-  tile.buildings.push({ id: game.state.turn * 100 + tile.buildings.length, type: defId, level: 1, invested: cost })
+  tile.buildings.push({ id: newBuildingId(game), type: defId, level: 1, invested: cost })
   game.log(`${p.name} 在「${tile.name}」建造了${def.icon}${def.name}（-${cost}）`, playerId)
   game.sfx('build' as any)
   game.markChanged()

@@ -3,9 +3,17 @@
 // 原 11 个弹窗各自复制此壳（约 40 行/份），现收拢为唯一来源；
 // 类名用 bm- 前缀且样式非 scoped，避免与各组件局部 .overlay/.modal 样式冲突。
 
+export type ModalWidth = 'sm' | 'md' | 'lg'
+/** width 枚举到 CSS 值的映射——比让每个调用者写 'min(400px, 92vw)' 更不易拼错 */
+const WIDTH_MAP: Record<ModalWidth, string> = {
+  sm: 'min(360px, 92vw)',  // 卡片 / 紧凑弹窗
+  md: 'min(400px, 92vw)',  // 默认，绝大多数弹窗
+  lg: 'min(440px, 92vw)',  // 内容较长的弹窗（交易/抉择/结算）
+}
+
 withDefaults(defineProps<{
-  /** 面板宽度（CSS width 值） */
-  width?: string
+  /** 面板宽度（枚举；未指定取 md） */
+  width?: ModalWidth
   /** 遮罩黑度 0~1（详情弹窗较浅、流程弹窗较深） */
   dim?: number
   /** 层级：流程弹窗 200，结算弹窗 160，详情弹窗 150 */
@@ -15,13 +23,13 @@ withDefaults(defineProps<{
   /** 内容可能超高时启用面板内部滚动（max-height 86vh + 纵向滚动） */
   scroll?: boolean
 }>(), {
-  width: 'min(380px, 92vw)',
+  width: 'md',
   dim: 0.72,
   z: 200,
   padding: '22px',
 })
 
-const emit = defineEmits<{ (e: 'backdrop'): void }>()
+defineEmits<{ (e: 'backdrop'): void }>()
 </script>
 
 <template>
@@ -30,7 +38,7 @@ const emit = defineEmits<{ (e: 'backdrop'): void }>()
     :style="{ zIndex: z, background: `rgba(24, 14, 6, ${dim})` }"
     @click.self="$emit('backdrop')"
   >
-    <div class="bm-modal" :class="{ 'bm-scroll': scroll }" :style="{ width, padding }">
+    <div class="bm-modal" :class="{ 'bm-scroll': scroll }" :style="{ width: WIDTH_MAP[width], padding }">
       <slot />
     </div>
   </div>
@@ -39,27 +47,62 @@ const emit = defineEmits<{ (e: 'backdrop'): void }>()
 <style>
 /* 非 scoped：作为全项目弹窗样式的唯一来源 */
 .bm-overlay {
-  position: fixed; inset: 0;
-  display: flex; align-items: center; justify-content: center;
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
 }
 .bm-modal {
-  border-radius: 16px;
+  position: relative;
+  border-radius: 15px;
+  color: var(--ink);
+  background-color: var(--paper-1);
   background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='300'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.11' numOctaves='4' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncA type='linear' slope='0.11'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='500' height='300' filter='url(%23s)'/%3E%3C/svg%3E"),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncG type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncB type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncA type='linear' slope='0.11'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23m)'/%3E%3C/svg%3E"),
-    radial-gradient(ellipse 130px 76px at 8% 30%, rgba(255, 250, 232, 0.26), transparent 70%),
-    radial-gradient(ellipse 150px 90px at 90% 62%, rgba(255, 248, 226, 0.2), transparent 70%),
-    radial-gradient(ellipse 140px 100px at 12% 80%, rgba(146, 96, 34, 0.14), transparent 72%),
-    radial-gradient(ellipse 170px 120px at 88% 12%, rgba(116, 72, 18, 0.12), transparent 72%),
-    radial-gradient(ellipse 80% 70% at 50% 48%, transparent 58%, rgba(122, 82, 30, 0.28) 100%),
-    linear-gradient(168deg, #f4e5ba 0%, #eed8a4 42%, #e6ca8e 100%);
-  border: 3px solid #8a5a2b;
+    radial-gradient(ellipse 150px 86px at 10% 8%, rgba(255, 250, 232, 0.34), transparent 70%),
+    radial-gradient(ellipse 150px 90px at 92% 88%, rgba(255, 248, 226, 0.22), transparent 70%),
+    radial-gradient(ellipse 84% 74% at 50% 46%, transparent 55%, rgba(122, 82, 30, 0.22) 100%),
+    var(--tex-paper),
+    linear-gradient(168deg, #fbf0d2 0%, #f0ddad 46%, #e6cd99 100%);
+  background-size: auto, auto, auto, 340px 340px, auto;
+  border: 2px solid var(--brass-3);
   box-shadow:
-    inset 0 0 34px rgba(94, 58, 14, 0.3),
-    inset 0 0 10px rgba(94, 58, 14, 0.24),
-    0 12px 40px rgba(0, 0, 0, 0.6);
-  animation: bm-pop 0.25s cubic-bezier(0.3, 1.4, 0.5, 1);
+    inset 0 0 0 1px rgba(255, 246, 214, 0.25),
+    inset 0 0 30px rgba(94, 58, 14, 0.24),
+    var(--shadow-lg);
+  animation: bm-pop 0.24s cubic-bezier(0.3, 1.35, 0.55, 1);
+}
+/* 内侧细金线 */
+.bm-modal::before {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border-radius: 10px;
+  border: 1px solid rgba(201, 162, 74, 0.4);
+  pointer-events: none;
 }
 .bm-modal.bm-scroll { max-height: 86vh; overflow-y: auto; }
-@keyframes bm-pop { from { transform: scale(0.7); opacity: 0; } }
+.bm-modal > * { position: relative; }
+
+/* 弹窗通用排版（各组件仍可覆盖） */
+.bm-modal .modal-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 19px;
+  font-weight: bold;
+  color: #5a3a14;
+  letter-spacing: 0.5px;
+  margin-bottom: 9px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(138, 95, 31, 0.3);
+}
+.bm-modal .modal-title::first-letter { color: var(--seal); }
+.bm-modal .modal-body { color: var(--ink); line-height: 1.6; }
+.bm-modal .modal-actions { margin-top: 15px; }
+
+@keyframes bm-pop {
+  from { transform: scale(0.86) translateY(6px); opacity: 0; }
+}
 </style>

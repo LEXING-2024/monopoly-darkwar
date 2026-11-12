@@ -32,10 +32,16 @@ function onBet(): void {
   if (!betValid.value) return
   respond({ skip: false, bet: Math.floor(bet.amount), choice: bet.choice })
 }
+
+/** 起点修理是否付得起：付不起时禁用按钮，避免点了之后核心静默不执行 */
+const repairAffordable = computed(() => {
+  if (props.prompt.type !== 'start-stop') return false
+  return (store.state?.players[props.prompt.player]?.cash ?? 0) >= props.prompt.repairCost
+})
 </script>
 
 <template>
-  <BaseModal>
+  <BaseModal width="md">
     <!-- 买地 / 买桥 -->
     <div v-if="prompt.type === 'buy' && tile">
       <div class="modal-title">{{ tile.type === 'bridge' ? '🌉 桥梁出售' : '🏞️ 空地出售' }}</div>
@@ -80,8 +86,10 @@ function onBet(): void {
       <div class="modal-actions">
         <button
           v-if="prompt.damagedCount > 0" class="btn primary"
+          :disabled="!repairAffordable"
+          :title="repairAffordable ? '' : '现金不足，无法支付修理费'"
           @click="respond('repair')"
-        >🔧 修理（{{ prompt.repairCost }}）</button>
+        >🔧 修理（{{ prompt.repairCost }}）<template v-if="!repairAffordable"> · 现金不足</template></button>
         <button class="btn" @click="respond('rest')">🛌 休息</button>
         <button class="btn" @click="respond('skip')">跳过</button>
       </div>

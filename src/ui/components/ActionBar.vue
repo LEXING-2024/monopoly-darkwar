@@ -1,13 +1,19 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { store } from '../store'
 import { ANTITRUST, RESOURCES, RESOURCE_ORDER } from '../../core/config'
 import { monopolyInfo, monopolyTargets } from '../../core/events'
 import type { ResourceType, TradeOffer } from '../../core/types'
+import Icon from './Icon.vue'
 
 const s = computed(() => store.state)
 const game = computed(() => store.game)
 const me = computed(() => (s.value ? s.value.players[s.value.currentPlayer] : null))
+const cur = computed(() => (s.value ? s.value.players[s.value.currentPlayer] : null))
+const PHASE_LABEL: Record<string, string> = {
+  order: '决定顺序', spin: '转动转盘', move: '移动中', landing: '落地结算', action: '行动决策',
+}
+const phaseLabel = computed(() => (s.value ? PHASE_LABEL[s.value.phase] ?? '对局进行中' : '对局进行中'))
 const myTurn = computed(() =>
   !!s.value && !!me.value && !me.value.isAI &&
   s.value.phase === 'action' &&
@@ -31,6 +37,10 @@ const sell = reactive({ res: 'wood' as ResourceType, units: 1 })
 const sellableRes = computed(() =>
   me.value ? RESOURCE_ORDER.filter(r => me.value!.resources[r] > 0) : [],
 )
+// 某种资源卖光后，下拉选项会消失；把选中项拉回仍持有的资源，避免按钮对空库存无效
+watch(sellableRes, list => {
+  if (list.length && !list.includes(sell.res)) sell.res = list[0]
+})
 
 // ---- 交易 ----
 const tradeOpen = ref(false)
@@ -52,9 +62,20 @@ const myTileList = computed(() => (s.value ? s.value.tiles.filter(t => t.owner =
 const theirTileList = computed(() =>
   s.value ? s.value.tiles.filter(t => t.owner === trade.target) : [],
 )
+// 切换交易对象时清空上一家已选的资产，避免把 A 的地块带到 B 的报价里
+watch(() => trade.target, () => {
+  trade.theirTiles = []
+  trade.theirRes = {}
+  trade.theirResPick = {}
+})
 
-function openTrade(): void {
-  trade.target = tradeTargets.value[0]?.id ?? 1
+function shortName(name: string): string {
+  const m = name.match(/·(\d+)号地/)
+  if (m) return `${name.slice(0, name.indexOf('·'))}${m[1]}`
+  return name
+}
+
+function openTrade(): void {  trade.target = tradeTargets.value[0]?.id ?? 1
   trade.myCash = 0
   trade.myTiles = []
   trade.myRes = {}
@@ -78,7 +99,11 @@ function tradeValue(tiles: number[], res: Record<string, number>, cash: number):
   const st = s.value
   if (!st) return num(cash)
   let v = num(cash)
-  for (const i of tiles) v += st.tiles[i]?.price ?? 0
+  for (const i of tiles) {
+    const t = st.tiles[i]
+    // 建筑随地块移交，估值与 AI / 交易确认弹窗保持同一口径
+    if (t) v += t.price + t.buildings.reduce((a, b) => a + b.invested, 0)
+  }
   for (const r of RESOURCE_ORDER) v += num(res[r]) * st.market[r]
   return Math.round(v)
 }
@@ -86,6 +111,25 @@ const tradeSummary = computed(() => {
   const give = tradeValue(trade.myTiles, trade.myRes, trade.myCash)
   const receive = tradeValue(trade.theirTiles, trade.theirRes, trade.theirCash)
   return { give, receive }
+})
+/** 提交前校验：避免 proposeTrade 静默拒绝后弹窗直接关闭、玩家不知道哪里填错了 */
+const tradeError = computed(() => {
+  if (!s.value || !me.value) return ''
+  if (num(trade.myCash) > me.value.cash) return '你给出的现金超过持有'
+  const target = s.value.players[trade.target]
+  if (!target) return '交易对象无效'
+  if (trade.myTiles.some(i => s.value!.tiles[i].owner !== me.value!.id)) return '你选择的地块已不属于你'
+  if (trade.theirTiles.some(i => s.value!.tiles[i].owner !== target.id)) return '对方已不再拥有所选地块'
+  if (num(trade.theirCash) > target.cash) return '对方现金不足'
+  for (const r of RESOURCE_ORDER) {
+    if (trade.myResPick[r] && num(trade.myRes[r]) > Math.floor(me.value.resources[r])) {
+      return `你给出的${RESOURCES[r].name}不足`
+    }
+    if (trade.theirResPick[r] && num(trade.theirRes[r]) > Math.floor(target.resources[r])) {
+      return `对方${RESOURCES[r].name}不足`
+    }
+  }
+  return ''
 })
 
 function toggle(arr: number[], v: number): void {
@@ -95,6 +139,7 @@ function toggle(arr: number[], v: number): void {
 }
 
 async function submitTrade(): Promise<void> {
+  if (tradeError.value) return
   const pick = (res: Record<string, number>, sel: Record<string, boolean>): Record<string, number> =>
     Object.fromEntries(RESOURCE_ORDER.filter(r => sel[r]).map(r => [r, num(res[r])]))
   const give: TradeOffer = {
@@ -118,8 +163,7 @@ function doSell(): void {
   if (units > 0) game.value?.sellResources(sell.res, units)
 }
 
-/** 等待窗口：当前行动者是 AI 时在视野中上方（顶部状态栏下方）悬浮显示 */
-const waiting = computed(() => {
+/** 等待窗口：当前行动者是 AI 时在视野中上方（顶部状态栏下方）悬浮显示 */const waiting = computed(() => {
   if (!s.value || !me.value) return null
   if (!me.value.isAI || !me.value.alive) return null
   if (!['spin', 'move', 'landing', 'action'].includes(s.value.phase)) return null
@@ -132,14 +176,33 @@ const waiting = computed(() => {
 </script>
 
 <template>
-  <!-- 操作卡片：仅在自己的行动阶段显示；非己回合整个容器隐藏、不占位 -->
-  <div v-if="s && me && myTurn" class="paper card">
-      <!-- 行动按钮 -->
-      <div class="actions">
-        <button class="btn" @click="openTrade">🤝 交易</button>
-        <button class="btn" @click="reportOpen = !reportOpen">🚨 反垄断举报</button>
-        <button class="btn" @click="lobbyOpen = !lobbyOpen">💼 游说</button>
-        <button class="btn danger" @click="game?.resign()">🏳️ 认输</button>
+  <!-- 行动卡片：常驻面板；非己回合显示等待状态，避免右侧留出大片空白 -->
+  <div v-if="s && me" class="paper card action-card">
+    <div class="card-head">
+      <span class="ch-icon"><Icon name="dice" :size="14" /></span>
+      <b>行动</b>
+      <span class="ch-rule" />
+      <span class="ch-meta">{{ myTurn ? '轮到你' : '等待中' }}</span>
+    </div>
+    <template v-if="myTurn">
+      <!-- 行动入口：四块纸牌 -->
+      <div class="action-grid">
+        <button class="action-tile trade" @click="openTrade">
+          <span class="at-icon"><Icon name="trade" :size="17" /></span>
+          <span class="at-text"><b>交易</b><i>地块 · 现金 · 资源</i></span>
+        </button>
+        <button class="action-tile report" @click="reportOpen = !reportOpen">
+          <span class="at-icon"><Icon name="report" :size="17" /></span>
+          <span class="at-text"><b>反垄断</b><i>举报垄断者</i></span>
+        </button>
+        <button class="action-tile lobby" @click="lobbyOpen = !lobbyOpen">
+          <span class="at-icon"><Icon name="briefcase" :size="17" /></span>
+          <span class="at-text"><b>游说</b><i>降低被举报率</i></span>
+        </button>
+        <button class="action-tile danger resign" @click="game?.resign()">
+          <span class="at-icon"><Icon name="flag" :size="17" /></span>
+          <span class="at-text"><b>认输</b><i>退出本局</i></span>
+        </button>
       </div>
 
       <!-- 举报菜单（主动举报制：垄断线 + 联合举报成功率） -->
@@ -174,17 +237,17 @@ const waiting = computed(() => {
       <div v-if="myTurn && sellableRes.length" class="sell-row">
         <select v-model="sell.res" class="mini-input">
           <option v-for="r in sellableRes" :key="r" :value="r">
-            {{ RESOURCES[r].icon }}{{ RESOURCES[r].name }} ×{{ Math.floor(me.resources[r]) }}（单价 ￥{{ s.market[r] }}）
+            {{ RESOURCES[r].name }} ×{{ Math.floor(me.resources[r]) }}（单价 ￥{{ s.market[r] }}）
           </option>
         </select>
         <input v-model.number="sell.units" type="number" min="1" class="mini-input units" />
-        <button class="btn small" @click="doSell">💰 卖出</button>
+        <button class="btn small" @click="doSell"><Icon name="coin" :size="13" /> 卖出</button>
       </div>
 
       <!-- 交易弹窗 -->
       <div v-if="tradeOpen" class="trade-overlay">
         <div class="paper trade-card">
-          <div class="trade-head">🤝 与谁交易？
+          <div class="trade-head"><Icon name="trade" :size="16" /> 与谁交易？
             <select v-model="trade.target" class="mini-input">
               <option v-for="p in tradeTargets" :key="p.id" :value="p.id">{{ p.name }}</option>
             </select>
@@ -193,19 +256,19 @@ const waiting = computed(() => {
             <!-- 我给出 -->
             <div class="trade-col">
               <div class="col-title">我给出</div>
-              <label class="cash-row">💰 现金
+              <label class="cash-row"><Icon name="coin" :size="13" /> 现金
                 <input v-model.number="trade.myCash" type="number" min="0" class="mini-input units" />
               </label>
               <div class="row-title">地块</div>
               <label v-for="t in myTileList" :key="t.index" class="trade-row">
                 <input type="checkbox" class="paper-check" :checked="trade.myTiles.includes(t.index)" @change="toggle(trade.myTiles, t.index)" />
-                <span class="row-name">{{ t.icon }} {{ t.name }}</span>
-                <span class="row-meta">￥{{ t.price }}<i v-if="t.buildings.length" class="bldg">🏗️{{ t.buildings.length }}</i></span>
+                <span class="row-name">{{ shortName(t.name) }}</span>
+                <span class="row-meta">￥{{ t.price }}<i v-if="t.buildings.length" class="bldg"><Icon name="building" :size="10" />{{ t.buildings.length }}</i></span>
               </label>
               <div class="row-title">资源</div>
               <label v-for="r in RESOURCE_ORDER" :key="'m' + r" class="trade-row">
                 <input type="checkbox" class="paper-check" v-model="trade.myResPick[r]" />
-                <span class="row-name">{{ RESOURCES[r].icon }} {{ RESOURCES[r].name }}</span>
+                <span class="row-name" :class="`res-${r}`"><Icon :name="r" :size="13" /> {{ RESOURCES[r].name }}</span>
                 <input
                   v-model.number="(trade.myRes[r] as any)" type="number" min="0"
                   :disabled="!trade.myResPick[r]" class="mini-input units" placeholder="0"
@@ -216,19 +279,19 @@ const waiting = computed(() => {
             <!-- 对方给出 -->
             <div class="trade-col">
               <div class="col-title">对方给出</div>
-              <label class="cash-row">💰 现金
+              <label class="cash-row"><Icon name="coin" :size="13" /> 现金
                 <input v-model.number="trade.theirCash" type="number" min="0" class="mini-input units" />
               </label>
               <div class="row-title">地块</div>
               <label v-for="t in theirTileList" :key="t.index" class="trade-row">
                 <input type="checkbox" class="paper-check" :checked="trade.theirTiles.includes(t.index)" @change="toggle(trade.theirTiles, t.index)" />
-                <span class="row-name">{{ t.icon }} {{ t.name }}</span>
-                <span class="row-meta">￥{{ t.price }}<i v-if="t.buildings.length" class="bldg">🏗️{{ t.buildings.length }}</i></span>
+                <span class="row-name">{{ shortName(t.name) }}</span>
+                <span class="row-meta">￥{{ t.price }}<i v-if="t.buildings.length" class="bldg"><Icon name="building" :size="10" />{{ t.buildings.length }}</i></span>
               </label>
               <div class="row-title">资源</div>
               <label v-for="r in RESOURCE_ORDER" :key="'t' + r" class="trade-row">
                 <input type="checkbox" class="paper-check" v-model="trade.theirResPick[r]" />
-                <span class="row-name">{{ RESOURCES[r].icon }} {{ RESOURCES[r].name }}</span>
+                <span class="row-name" :class="`res-${r}`"><Icon :name="r" :size="13" /> {{ RESOURCES[r].name }}</span>
                 <input
                   v-model.number="(trade.theirRes[r] as any)" type="number" min="0"
                   :disabled="!trade.theirResPick[r]" class="mini-input units" placeholder="0"
@@ -246,22 +309,127 @@ const waiting = computed(() => {
             >{{ tradeSummary.receive >= tradeSummary.give ? '对方可能接受' : '对方可能拒绝' }}</span>
           </div>
           <div class="trade-actions">
-            <button class="btn primary" @click="submitTrade">提出交易</button>
+            <span v-if="tradeError" class="trade-error">{{ tradeError }}</span>
+            <button class="btn primary" :disabled="!!tradeError" @click="submitTrade">提出交易</button>
             <button class="btn" @click="tradeOpen = false">取消</button>
           </div>
         </div>
       </div>
+    </template>
+    <div v-else class="waiting-card">
+      <span class="wait-orbit"><Icon name="compass" :size="26" /></span>
+      <b>{{ myTurn ? '轮到你行动' : cur ? `等待 ${cur.name} 行动` : '等待行动' }}</b>
+      <i>{{ phaseLabel }} · 先观察市场与地块</i>
+      <span class="wait-tip"><Icon name="hourglass" :size="12" /> 资源价格、桥梁与地形垄断都会影响终局</span>
+    </div>
   </div>
 
-  <!-- AI 行动中悬浮窗口（视野中上方、顶部状态栏下方），独立于操作卡片，AI 行动时常显 -->
-  <div v-if="waiting" class="waiting-window">
-    <span class="w-dot" :style="{ background: waiting.color }" />
-    <span class="w-text">🤖 {{ waiting.name }}（AI）{{ waiting.phaseText }}…</span>
-  </div>
 </template>
 
 <style scoped>
-.card { padding: 10px 14px; }
+.action-card { padding: 9px 12px 11px; }
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 7px;
+  border-bottom: 1px solid rgba(160, 120, 60, 0.3);
+}
+.ch-icon {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  color: var(--brass-3);
+  border: 1px solid rgba(138, 95, 31, 0.45);
+  background: rgba(255, 248, 226, 0.55);
+}
+.card-head b { font-size: 13px; color: var(--ink); letter-spacing: 2px; }
+.ch-rule { flex: 1; height: 1px; background: linear-gradient(90deg, rgba(138, 95, 31, 0.35), transparent); }
+.ch-meta { font-size: 9.5px; color: var(--ink-4); letter-spacing: 1px; }
+.action-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.action-tile {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 7px 8px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink);
+  border: 1px solid rgba(138, 95, 31, 0.42);
+  border-radius: 8px;
+  background-image:
+    var(--tex-paper),
+    linear-gradient(180deg, #fbf2d9, #eedcae);
+  background-size: 180px 180px, auto;
+  box-shadow: inset 0 1px 0 rgba(255, 253, 244, 0.7), 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: transform 0.1s ease, filter 0.12s ease;
+  font-family: inherit;
+}
+.action-tile:hover { filter: brightness(1.045); transform: translateY(-1px); }
+.action-tile:active { transform: translateY(1px); }
+.at-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  color: var(--brass-3);
+  border: 1px solid rgba(138, 95, 31, 0.35);
+  background: radial-gradient(circle at 35% 30%, #fffaf0, #eeddb6);
+}
+.at-text { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.at-text b { font-size: 12.5px; letter-spacing: 1px; white-space: nowrap; }
+.at-text i { font-style: normal; font-size: 9.5px; color: var(--ink-4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.action-tile { --act: #8a5f1f; --act-bg: #f6e8c4; --act-line: rgba(138, 95, 31, 0.4); border-left: 3px solid var(--act-line); }
+.action-tile.trade { --act: #2e6a46; --act-bg: #e3f0dd; --act-line: #4f8a62; }
+.action-tile.report { --act: #a53a2b; --act-bg: #f6e0d6; --act-line: #b65b48; }
+.action-tile.lobby { --act: #6a4a8f; --act-bg: #ebe1f2; --act-line: #8b6dab; }
+.action-tile.danger, .action-tile.resign { color: #7c2118; border-color: rgba(140, 54, 40, 0.42); background-image: var(--tex-paper), linear-gradient(180deg, #f8e4d8, #edc8b8); --act: #8c2a1f; --act-bg: #fae6dc; --act-line: #a94a36; }
+.at-icon { color: var(--act); border-color: var(--act-line); background: radial-gradient(circle at 36% 30%, #fffdf6, var(--act-bg)); }
+.action-tile:hover { border-left-color: var(--act); }
+.waiting-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 3px;
+  padding: 10px 4px 6px;
+}
+.wait-orbit {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  color: var(--brass-3);
+  border: 1px dashed rgba(138, 95, 31, 0.45);
+  background: radial-gradient(circle at 40% 34%, rgba(255, 248, 226, 0.75), rgba(232, 208, 154, 0.35));
+  animation: orbit 12s linear infinite;
+  margin-bottom: 3px;
+}
+@keyframes orbit { to { transform: rotate(360deg); } }
+.waiting-card b { font-size: 13px; color: var(--ink); letter-spacing: 1px; }
+.waiting-card i { font-style: normal; font-size: 10.5px; color: var(--ink-3); }
+.wait-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 7px;
+  font-size: 9.5px;
+  color: var(--ink-4);
+  border: 1px dashed rgba(138, 95, 31, 0.3);
+  border-radius: 6px;
+}
 /* AI 行动中悬浮窗口：固定在视野中上方（顶部状态栏下方） */
 .waiting-window {
   position: fixed;
@@ -273,17 +441,19 @@ const waiting = computed(() => {
   align-items: center;
   gap: 8px;
   padding: 7px 18px;
-  border: 2px solid #8a5a2b;
-  border-radius: 22px;
+  border: 1.5px solid var(--brass-3);
+  border-radius: 11px;
+  color: var(--ink);
   background-image:
-    radial-gradient(ellipse 90px 30px at 24% 12%, rgba(255, 250, 232, 0.5), transparent 70%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncG type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncB type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncA type='linear' slope='0.11'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(168deg, #f4e5ba 0%, #eed8a4 55%, #e6ca8e 100%);
+    radial-gradient(ellipse 120px 40px at 24% 0%, rgba(255, 250, 232, 0.5), transparent 70%),
+    var(--tex-paper),
+    linear-gradient(168deg, #f8ebc8 0%, #eed9a6 55%, #e4cc93 100%);
+  background-size: auto, 340px 340px, auto;
   box-shadow:
-    inset 0 0 14px rgba(94, 58, 14, 0.25),
-    0 4px 16px rgba(0, 0, 0, 0.45);
+    inset 0 0 14px rgba(94, 58, 14, 0.18),
+    var(--shadow-md);
   pointer-events: none;
-  animation: waitIn 0.25s ease-out, waitPulse 1.6s ease-in-out 0.25s infinite;
+  animation: waitIn 0.25s ease-out, waitPulse 1.8s ease-in-out 0.25s infinite;
 }
 .w-dot {
   width: 12px; height: 12px; border-radius: 50%;
@@ -291,30 +461,28 @@ const waiting = computed(() => {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   flex: none;
 }
-.w-text { font-size: 14px; color: #4a3018; white-space: nowrap; }
+.w-text { display: inline-flex; align-items: center; gap: 4px; font-size: 13.5px; color: var(--ink); white-space: nowrap; }
 @keyframes waitIn { from { opacity: 0; transform: translate(-50%, -8px); } }
 @keyframes waitPulse { 50% { filter: brightness(1.05); } }
 .hint { font-size: 12px; color: #a08860; padding: 4px 0; }
 .tile-detail { border-top: 1px dashed #c9b28a; padding-top: 6px; margin-top: 2px; }
 .td-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rent { color: #b0392e; font-weight: bold; font-size: 13px; }
+.rent { color: var(--rise-ink); font-weight: 700; font-size: 13px; }
 .td-sub { font-size: 12px; color: #6a4a28; margin-top: 2px; }
 .td-bldgs { margin-top: 4px; display: flex; flex-direction: column; gap: 3px; }
 .td-bldg { font-size: 12px; color: #4a3018; display: flex; align-items: center; gap: 6px; }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .submenu {
-  margin-top: 8px; padding: 8px;
+  margin-top: 8px; padding: 9px;
+  color: var(--ink);
   background-image:
-    /* 污渍线条 */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='300'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.11' numOctaves='4' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.06'/%3E%3CfeFuncA type='linear' slope='0.1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='500' height='300' filter='url(%23s)'/%3E%3C/svg%3E"),
-    /* 米花纸纹 */
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncG type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncB type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncA type='linear' slope='0.1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23m)'/%3E%3C/svg%3E"),
-    /* 边缘老化 */
-    radial-gradient(ellipse 80% 70% at 50% 45%, transparent 60%, rgba(122, 82, 30, 0.22) 100%),
-    linear-gradient(168deg, #f4e5ba 0%, #eed8a4 45%, #e6ca8e 100%);
-  border: 1.5px solid #8a6534;
-  border-radius: 8px; display: flex; flex-wrap: wrap; gap: 5px;
-  box-shadow: inset 0 0 18px rgba(94, 58, 14, 0.25);
+    radial-gradient(ellipse 120px 60px at 16% 0%, rgba(255, 250, 232, 0.4), transparent 70%),
+    var(--tex-paper),
+    linear-gradient(168deg, #f6e8c0 0%, #eed9a6 100%);
+  background-size: auto, 320px 320px, auto;
+  border: 1.5px solid rgba(138, 101, 52, 0.8);
+  border-radius: 9px; display: flex; flex-wrap: wrap; gap: 5px;
+  box-shadow: inset 0 0 14px rgba(94, 58, 14, 0.18);
 }
 .sell-row { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
 /* 手机端：资源下拉占满整行，数量输入+卖出按钮另起一行，无需横向滑动 */
@@ -335,17 +503,19 @@ html.is-mobile .sell-row .units { flex: 1 1 auto; min-width: 60px; }
 .menu-meta { font-size: 11px; color: #8a6a44; margin-left: 6px; }
 .btn.small:disabled { opacity: 0.5; cursor: not-allowed; }
 .mini-input {
-  padding: 5px 8px; border-radius: 6px; border: 1.5px solid #8a6534;
+  padding: 5px 8px; border-radius: 6px; border: 1.5px solid var(--brass-3);
+  color: var(--ink);
+  font-size: 12.5px;
   background-image:
     radial-gradient(ellipse 30px 18px at 86% 20%, rgba(255, 250, 232, 0.4), transparent 70%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' seed='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncG type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncB type='linear' slope='0.3' intercept='0.05'/%3E%3CfeFuncA type='linear' slope='0.12'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(180deg, #faf0d0, #eedcaa);
+    var(--tex-paper),
+    linear-gradient(180deg, #fbf2d6, #eedcaa);
+  background-size: auto, 220px 220px, auto;
   box-shadow:
-    inset 0 2px 4px rgba(110, 70, 20, 0.3),
-    inset 0 -1px 2px rgba(255, 250, 230, 0.5),
-    0 1px 0 rgba(255, 244, 210, 0.4);
-  font-size: 13px; color: #4a3018;
+    inset 0 2px 4px rgba(110, 70, 20, 0.26),
+    inset 0 -1px 2px rgba(255, 250, 230, 0.5);
 }
+.mini-input:focus { outline: 2px solid rgba(201, 162, 74, 0.55); outline-offset: 1px; }
 .units { width: 76px; }
 .trade-overlay {
   position: fixed; inset: 0; background: rgba(30, 18, 8, 0.6);
@@ -356,11 +526,12 @@ html.is-mobile .sell-row .units { flex: 1 1 auto; min-width: 60px; }
 .trade-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .trade-col {
   background-image:
-    radial-gradient(ellipse 90px 50px at 14% 16%, rgba(255, 250, 232, 0.4), transparent 70%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncG type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncB type='linear' slope='0.34' intercept='0.02'/%3E%3CfeFuncA type='linear' slope='0.1'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23m)'/%3E%3C/svg%3E"),
-    linear-gradient(168deg, #f6e8c0 0%, #efdcab 100%);
-  border: 1.5px solid #b99a6a; border-radius: 8px; padding: 8px;
-  box-shadow: inset 0 0 14px rgba(120, 80, 25, 0.18);
+    radial-gradient(ellipse 90px 50px at 14% 0%, rgba(255, 250, 232, 0.42), transparent 70%),
+    var(--tex-paper),
+    linear-gradient(168deg, #f8ecc8 0%, #efdcab 100%);
+  background-size: auto, 300px 300px, auto;
+  border: 1px solid rgba(176, 143, 92, 0.85); border-radius: 9px; padding: 9px;
+  box-shadow: inset 0 0 12px rgba(120, 80, 25, 0.14);
 }
 .col-title { font-size: 13px; font-weight: bold; color: #8a5a2b; margin-bottom: 6px; }
 .cash-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 3px 0; cursor: pointer; }
@@ -376,6 +547,10 @@ html.is-mobile .sell-row .units { flex: 1 1 auto; min-width: 60px; }
 .trade-row:hover { background: rgba(160, 120, 60, 0.12); }
 .trade-row .paper-check { flex: none; }
 .row-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #4a3018; }
+.row-name.res-wood :deep(.ui-icon) { color: #2e6a3c; }
+.row-name.res-beef :deep(.ui-icon) { color: #9a3a2a; }
+.row-name.res-oil :deep(.ui-icon) { color: #494238; }
+.row-name.res-fish :deep(.ui-icon) { color: #17697a; }
 .row-meta { color: #8a6a44; font-size: 11.5px; white-space: nowrap; }
 .row-meta .bldg { font-style: normal; margin-left: 5px; }
 .trade-row input.mini-input:disabled { opacity: 0.45; }
@@ -387,7 +562,9 @@ html.is-mobile .sell-row .units { flex: 1 1 auto; min-width: 60px; }
 }
 .trade-summary .vs { color: #a5711f; font-weight: bold; }
 .trade-summary .balance { font-size: 12px; padding: 2px 8px; border-radius: 10px; }
-.trade-summary .balance.good { background: rgba(90, 160, 80, 0.18); color: #3d6b30; }
-.trade-summary .balance.bad { background: rgba(200, 90, 60, 0.15); color: #a0452c; }
-.trade-actions { display: flex; gap: 10px; margin-top: 14px; justify-content: flex-end; }
+.trade-summary .balance.good { background: var(--fall-soft); color: var(--fall-ink); font-weight: 700; }
+.trade-summary .balance.bad { background: var(--rise-soft); color: var(--rise-ink); font-weight: 700; }
+.trade-actions { display: flex; gap: 10px; margin-top: 14px; justify-content: flex-end; align-items: center; }
+.trade-error { margin-right: auto; color: var(--rise-ink); font-size: 12px; font-weight: 600; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

@@ -3,7 +3,7 @@
 import { bridgeToll, tileRent, totalValue } from '../economy'
 import type { AiBrain, GameApi, Terrain } from '../types'
 import { grudge, incomeEstimate, monopolyRushInfo } from './brain'
-import { betrayalCount, reportCount } from './memory'
+import { reportCount } from './memory'
 
 /** 每回合刷新对手模型快照（公开信息 + 推断） */
 export function updateOpponentModels(game: GameApi, playerId: number): void {
@@ -19,7 +19,7 @@ export function updateOpponentModels(game: GameApi, playerId: number): void {
       m = {
         id: other.id, cashEst: 0, terrainCount: {}, totalValueEst: 0, incomeEst: 0,
         monopolyRush: false, desperate: false, tradeCount: 0,
-        betrayals: 0, reportsAgainstMe: 0, threat: 0,
+        reportsAgainstMe: 0, threat: 0,
       }
       brain.models.push(m)
     }
@@ -39,13 +39,12 @@ export function updateOpponentModels(game: GameApi, playerId: number): void {
     m.monopolyRush = rush.rushing
     // 急需现金：现金低且收入低（卖资源续命）
     m.desperate = other.cash < 1500 && m.incomeEst < 300
-    m.betrayals = betrayalCount(brain, other.id)
     m.reportsAgainstMe = reportCount(brain, other.id)
 
     // 威胁值：资产规模 + 收入 + 对我可收取的租金/过路费 + 垄断进度 + 敌意
     let v = m.totalValueEst * 0.3 + m.incomeEst * 8
     for (const t of s.tiles) {
-      if (t.owner !== other.id || t.owner === me.id) continue
+      if (t.owner !== other.id) continue
       if (t.type === 'bridge') v += bridgeToll(game, t) * 4
       else v += tileRent(game, t, other) * 2
     }

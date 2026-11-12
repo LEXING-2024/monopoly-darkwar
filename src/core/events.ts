@@ -1,11 +1,12 @@
-// ============ 事件系统：反垄断 / 囚徒困境 / 事件链 / 季节事件（文档 6.3、9.3、9.4、10） ============
+// ============ 事件系统：反垄断 / 事件链 / 季节事件（文档 6.3、9.3、10） ============
 
 import {
-  ANTITRUST, BRIDGES, DILEMMA_PAYOFFS, EAST_BRIDGE, SEASON_EVENTS, TERRAIN_RESOURCE, WEST_BRIDGE,
+  ANTITRUST, BRIDGES, EAST_BRIDGE, SEASON_EVENTS, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from './config'
 import { repairCost } from './buildings'
+import { applyPriceShock } from './market'
 import { remember } from './ai/memory'
-import type { ChainState, GameApi, Player, ResourceType } from './types'
+import type { ChainState, GameApi, ResourceType } from './types'
 
 // ---------- 反垄断举报（文档 9.3：玩家主动举报制） ----------
 
@@ -125,7 +126,7 @@ async function applyPunishment(game: GameApi, targetId: number, joiners: number[
     case 'fine': {
       const fine = Math.round((totalValue * ANTITRUST.fineRatio) / 10) * 10
       await game.pay(targetId, fine, null, '反垄断罚款')
-      // 举报奖金：罚款的 15% 由举报人平分
+      // 举报奖金：罚款的 25%（ANTITRUST.bountyRatio）由举报人平分
       const bounty = Math.round((fine * ANTITRUST.bountyRatio) / joiners.length / 10) * 10
       for (const id of joiners) {
         if (s.players[id].alive) game.gain(id, bounty, '举报奖金')
@@ -141,7 +142,8 @@ async function applyPunishment(game: GameApi, targetId: number, joiners: number[
       const tile = mono.sort((a, b) => b.price - a.price)[0]
       if (tile) {
         game.log(`举报成功：「${target.name}」的「${tile.name}」被强制拍卖！`)
-        await game.runAuction(tile.index, Math.round((tile.price / 2) / 10) * 10, { seller: targetId })
+        // 惩罚性拍卖：卖家（被举报的垄断者）不得参与，否则可用半价把自己买回来，惩罚形同虚设
+        await game.runAuction(tile.index, Math.round((tile.price / 2) / 10) * 10, { seller: targetId, exclude: targetId })
       }
       // 事件链：反垄断余波（2 轮后举报人获得奖励）
       addChain(game, 'antitrust-aftermath', joiners[0], 2, {})
@@ -157,12 +159,19 @@ async function applyPunishment(game: GameApi, targetId: number, joiners: number[
   }
 }
 
-/** 卡牌特殊举报：无需满足垄断线、免举报费，单人成功率为 40% */
+/** 卡牌特殊举报：无需满足垄断线、免举报费，单人成功率固定 40%（与 reportMonopoly 共用失败/成功通知与冷却） */
 export async function specialReport(game: GameApi, reporterId: number, targetId: number): Promise<void> {
   const s = game.state
+  const reporter = s.players[reporterId]
   const target = s.players[targetId]
-  if (!target?.alive) return
-  game.log(`「${s.players[reporterId].name}」通过特殊渠道对「${target.name}」发起举报！`, reporterId)
+  if (!reporter?.alive || !target?.alive) return
+  // 失败保护期对特殊举报同样生效（否则卡牌可以绕过 2 轮冷却反复举报）
+  if (target.status.reportCooldown > 0) {
+    game.log(`「${target.name}」近期刚通过审查，${target.status.reportCooldown} 轮内不可再被举报`, reporterId)
+    return
+  }
+  game.log(`「${reporter.name}」通过特殊渠道对「${target.name}」发起举报！`, reporterId)
+  // 单人卡牌举报成功率固定为 ANTITRUST.reportProb[1]（40%），无举报费、无需游说修正
   if (!game.rng.chance(ANTITRUST.reportProb[1])) {
     target.status.reportCooldown = ANTITRUST.cooldownRounds
     await game.notice('举报失败', `对「${target.name}」的举报未获受理！接下来 ${ANTITRUST.cooldownRounds} 轮内不可再举报该玩家。`, '⚖️')
@@ -189,53 +198,6 @@ export function lobby(game: GameApi, playerId: number, level: 1 | 2 | 3): boolea
   game.sfx('click')
   game.markChanged()
   return true
-}
-
-// ---------- 囚徒困境（文档 9.4） ----------
-
-export async function runDilemma(game: GameApi): Promise<void> {
-  const s = game.state
-  const alive = s.players.filter(p => p.alive)
-  if (alive.length < 2) return
-  const [a, b] = game.rng.shuffle(alive).slice(0, 2)
-  game.sfx('dilemma')
-  const choiceA = await game.prompt<'cooperate' | 'betray'>({
-    type: 'dilemma', player: a.id, other: b.name,
-  })
-  const choiceB = await game.prompt<'cooperate' | 'betray'>({
-    type: 'dilemma', player: b.id, other: a.name,
-  })
-  const mB: 'C' | 'D' = choiceB === 'cooperate' ? 'C' : 'D'
-  const mA: 'C' | 'D' = choiceA === 'cooperate' ? 'C' : 'D'
-  a.dilemmaMem[b.id] = [...(a.dilemmaMem[b.id] ?? []), mB].slice(-3)
-  b.dilemmaMem[a.id] = [...(b.dilemmaMem[a.id] ?? []), mA].slice(-3)
-  // AI 记忆与情绪：对方的选择写入大脑（背叛记仇、合作抚平）
-  remember(s, a.id, b.id, mB === 'C' ? 'cooperate' : 'betray')
-  remember(s, b.id, a.id, mA === 'C' ? 'cooperate' : 'betray')
-
-  const [payA, payB] =
-    choiceA === 'cooperate' && choiceB === 'cooperate' ? DILEMMA_PAYOFFS.CC
-    : choiceA === 'betray' && choiceB === 'cooperate' ? DILEMMA_PAYOFFS.DC
-    : choiceA === 'cooperate' && choiceB === 'betray' ? [DILEMMA_PAYOFFS.DC[1], DILEMMA_PAYOFFS.DC[0]] as [number, number]
-    : DILEMMA_PAYOFFS.DD
-
-  await applyDilemmaPay(game, a, choiceA, payA)
-  await applyDilemmaPay(game, b, choiceB, payB)
-
-  await game.notice(
-    '囚徒困境',
-    `共同开发新资源：「${a.name}」选择${choiceA === 'cooperate' ? '合作' : '背叛'}，「${b.name}」选择${choiceB === 'cooperate' ? '合作' : '背叛'}。`,
-    '🤝',
-  )
-}
-
-async function applyDilemmaPay(game: GameApi, p: Player, choice: 'cooperate' | 'betray', pay: number): Promise<void> {
-  if (pay >= 0) {
-    game.gain(p.id, pay, `囚徒困境（${choice === 'cooperate' ? '合作' : '背叛'}）`)
-  } else {
-    // 背叛代价走支付流程（可能破产）
-    await game.pay(p.id, -pay, null, `囚徒困境损失`)
-  }
 }
 
 // ---------- 事件链（文档 10） ----------
@@ -297,34 +259,36 @@ async function fireChain(game: GameApi, chain: ChainState): Promise<void> {
     }
     case 'typhoon-rebuild': {
       // 所有拥有受损沿海建筑的玩家依次选择
+      const SUBSIDY = 500
       for (const p of s.players) {
         if (!p.alive) continue
+        // 只统计真正处于「受损待修」状态的建筑（旧实现按 level<3 判定，
+        // 会把完好的低级建筑也算进修理费——玩家付钱却没有任何建筑被修复）
         const damaged = s.tiles.filter(
           t => t.owner === p.id && t.terrain === 'coast' &&
-            t.buildings.some(b => b.level < 3),
+            t.buildings.some(b => b.damaged),
         )
         if (damaged.length === 0) continue
-        const totalCost = damaged.reduce(
-          (sum, t) => sum + t.buildings.reduce((a, b) => a + (b.level < 3 ? repairCost(game, b) * 0.5 : 0), 0), 0,
-        )
+        const totalCost = Math.round(damaged.reduce(
+          (sum, t) => sum + t.buildings.reduce((a, b) => a + (b.damaged ? repairCost(game, b) * 0.5 : 0), 0), 0,
+        ))
+        if (totalCost <= 0) continue
         const choice = await game.prompt<'repair' | 'subsidy'>({
           type: 'pay-or-lose',
           title: '灾后重建',
-          desc: `台风损坏了你的沿海建筑。可支付 ${Math.round(totalCost)} 以半价修理，或领取 300 政府补贴（建筑保持受损）。`,
-          cost: Math.round(totalCost), loseDesc: '领取 300 补贴', player: p.id,
+          desc: `台风损坏了你的沿海建筑。可支付 ${totalCost} 以半价修理，或领取 ${SUBSIDY} 政府补贴（建筑保持受损）。`,
+          cost: totalCost, loseDesc: `领取 ${SUBSIDY} 补贴`, player: p.id,
         })
         if (choice === 'repair') {
-          await game.pay(p.id, Math.round(totalCost), null, '灾后重建修理费')
+          await game.pay(p.id, totalCost, null, '灾后重建修理费')
+          if (!s.players[p.id].alive) continue   // 支付导致破产：资产已移交，不可再替他人修建筑
+          // 修理只清受损标记、保留等级——与 buildings.ts 全局"修理不恢复等级"语义一致
           for (const t of damaged) {
-            for (const b of t.buildings) {
-              while (b.level < 3) {
-                b.level = (b.level + 1) as 1 | 2 | 3
-              }
-            }
+            for (const b of t.buildings) b.damaged = false
           }
-          game.log(`「${p.name}」完成灾后重建，沿海建筑恢复如初`, p.id)
+          game.log(`「${p.name}」完成灾后重建，沿海建筑受损标记已清除`, p.id)
         } else {
-          game.gain(p.id, 500, '政府补贴')
+          game.gain(p.id, SUBSIDY, '政府补贴')
         }
       }
       break
@@ -336,6 +300,7 @@ async function fireChain(game: GameApi, chain: ChainState): Promise<void> {
     }
     case 'harvest-crash': {
       s.priceMods.push({ resource: 'beef', factor: 0.7, turns: 2, label: '粮价暴跌' })
+      applyPriceShock(game, 'beef', 0.7)
       await game.notice('粮价暴跌', '丰收过后市场饱和，牛肉价格 -30%，持续 2 回合！', '📉')
       break
     }
@@ -362,6 +327,7 @@ async function fireChain(game: GameApi, chain: ChainState): Promise<void> {
       }
       if (total >= needed) {
         bridge.bridgeLevel = Math.min(3, bridge.bridgeLevel + 1) as 0 | 1 | 2 | 3
+        bridge.bridgeClosed = 0   // 已集资抢修：同时解除此前的关闭状态
         await game.notice('抢修完成', `「${bridge.name}」修复完毕！`, '🌉')
       } else {
         bridge.bridgeClosed = 2
@@ -372,7 +338,8 @@ async function fireChain(game: GameApi, chain: ChainState): Promise<void> {
     case 'shareholder-panic': {
       const p = s.players[chain.playerId as number]
       if (p && p.alive) {
-        p.status.rentBonus.push({ factor: 0.8, turns: 2, label: '股民恐慌' })
+        // turns=N+1：个人状态在本回合结束先衰减一次，覆盖接下来 2 个完整轮次
+        p.status.rentBonus.push({ factor: 0.8, turns: 3, label: '股民恐慌' })
         game.log(`「${p.name}」受股民恐慌影响，收取租金 -20%（2 回合）`, p.id)
       }
       break
@@ -381,7 +348,7 @@ async function fireChain(game: GameApi, chain: ChainState): Promise<void> {
       const p = s.players[chain.playerId as number]
       if (p && p.alive) {
         game.gain(p.id, 1000, '反垄断余波奖励')
-        game.log(`「${p.name}」因举报有功获得 ￥500 奖励`, p.id)
+        game.log(`「${p.name}」因举报有功获得 ￥1000 奖励`, p.id)
       }
       break
     }
@@ -396,10 +363,18 @@ export function applySeasonEvent(game: GameApi): void {
   const pool = SEASON_EVENTS.filter(e => !e.seasons || e.seasons.includes(s.season))
   const ev = game.rng.pick(pool)
   s.seasonEvent = { name: ev.name, desc: ev.desc }
-  if (ev.rentMod) s.rentMods.push({ factor: ev.rentMod, turns: 3, label: ev.name })
-  if (ev.priceMod) s.priceMods.push({ resource: ev.priceMod.resource, factor: ev.priceMod.factor, turns: 3, label: ev.name })
-  if (ev.outputMod) s.outputModsRes.push({ resource: ev.outputMod.resource, factor: ev.outputMod.factor, turns: 3, label: ev.name })
-  if (ev.outputModAll) s.outputModAll.push({ factor: ev.outputModAll, turns: 3, label: ev.name })
+  // 季节事件标注「本季」：持续整个季节（全局修正按轮衰减）。
+  // 旧实现固定 3 个「玩家回合」，4~8 人局里连半轮都撑不到，与文案严重不符。
+  const turns = Math.max(1, s.seasonLen)
+  if (ev.rentMod) s.rentMods.push({ factor: ev.rentMod, turns, label: ev.name })
+  if (ev.priceMod) {
+    s.priceMods.push({ resource: ev.priceMod.resource, factor: ev.priceMod.factor, turns, label: ev.name })
+    // 季节事件开局即体现价格变化，但只施加 25% 强度：
+    // 完整冲击会明显缩短对局（4 人局中位从 ~334 压到 ~289），25% 保留方向感且几乎不动节奏。
+    applyPriceShock(game, ev.priceMod.resource, 1 + (ev.priceMod.factor - 1) * 0.25)
+  }
+  if (ev.outputMod) s.outputModsRes.push({ resource: ev.outputMod.resource, factor: ev.outputMod.factor, turns, label: ev.name })
+  if (ev.outputModAll) s.outputModAll.push({ factor: ev.outputModAll, turns, label: ev.name })
   if (ev.typhoonProbDelta) s.typhoonProbDelta = ev.typhoonProbDelta
   if (ev.floodProbDelta) s.floodProbDelta = ev.floodProbDelta
   if (ev.skipDisaster) s.skipDisaster = ev.skipDisaster
