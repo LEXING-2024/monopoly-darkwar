@@ -4,6 +4,7 @@ import {
   ANTITRUST, BRIDGES, EAST_BRIDGE, SEASON_EVENTS, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from './config'
 import { repairCost } from './buildings'
+import { keyBreakupTile, totalValue as playerTotalValue } from './economy'
 import { applyPriceShock } from './market'
 import { remember } from './ai/memory'
 import type { ChainState, GameApi, ResourceType } from './types'
@@ -152,6 +153,33 @@ async function applyPunishment(game: GameApi, targetId: number, joiners: number[
     case 'output': {
       target.status.outputMods.push({ factor: 0.5, turns: 2, label: '反垄断制裁' })
       game.log(`举报成功：「${target.name}」资源产出减半，持续 2 轮！`)
+      game.sfx('lose')
+      addChain(game, 'antitrust-aftermath', joiners[0], 2, {})
+      break
+    }
+    case 'breakup': {
+      // 结构性救济：优先抽走最长连片段的中点（连片加成直接归零）；
+      // 没有连片时改拆其价值最高的地块——拆分总能生效，不会空转。
+      const tile = keyBreakupTile(game, targetId) ?? mono.sort((a, b) => b.price - a.price)[0]
+      if (!tile) break
+      const price = Math.round((tile.price * ANTITRUST.breakupTransferRatio) / 10) * 10
+      // 接盘方：资产最弱的存活对手（且付得起半价）；都付不起则收归无主
+      const weakest = s.players
+        .filter(x => x.alive && x.id !== targetId && x.cash >= price)
+        .sort((a, b) => playerTotalValue(game, a.id) - playerTotalValue(game, b.id))[0]
+      tile.buildings = []   // 强制剥离：地上建筑一并拆除
+      tile.disaster = null
+      if (weakest) {
+        weakest.cash -= price
+        target.cash += price
+        tile.owner = weakest.id
+        game.log(`反垄断强制拆分：「${target.name}」的连片被劈开，「${tile.name}」作价 ￥${price} 转给最弱的「${weakest.name}」——其连片加成清零！`, targetId)
+        game.emit('float', { tile: tile.index, text: '⚖️ 强制拆分', color: '#c9a24a' })
+      } else {
+        tile.owner = null
+        game.log(`反垄断强制拆分：「${target.name}」的「${tile.name}」被收回国有（无人接盘），连片加成清零！`, targetId)
+        game.emit('float', { tile: tile.index, text: '⚖️ 收归国有', color: '#c9a24a' })
+      }
       game.sfx('lose')
       addChain(game, 'antitrust-aftermath', joiners[0], 2, {})
       break

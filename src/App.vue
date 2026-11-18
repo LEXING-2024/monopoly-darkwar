@@ -58,12 +58,6 @@ onBeforeUnmount(() => {
       <div class="main">
         <BoardCanvas class="board" />
         <aside class="panel">
-          <div class="panel-head">
-            <span class="ph-seal"><Icon name="compass" :size="15" /></span>
-            <span class="ph-title">商路战局</span>
-            <span class="ph-rule" />
-            <span class="ph-meta" v-if="store.state">第 {{ store.state.totalRound ?? store.state.round }} 回合</span>
-          </div>
           <div class="panel-scroll">
             <PlayerPanel />
             <ActionBar />
@@ -89,7 +83,7 @@ onBeforeUnmount(() => {
       <BidModal v-else-if="prompt?.type === 'bid'" :prompt="prompt" />
       <TradeOfferModal v-else-if="prompt?.type === 'trade-offer'" :prompt="prompt" />
       <ChooseModals
-        v-else-if="prompt && ['choose-resource', 'choose-tile'].includes(prompt.type)"
+        v-else-if="prompt && ['choose-resource', 'choose-tile', 'choose-terrain'].includes(prompt.type)"
         :prompt="prompt"
       />
       <SimpleModals
@@ -121,54 +115,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.panel-head {
-  flex: none;
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 36px;
-  padding: 0 8px;
-  margin-bottom: 6px;
-  border-radius: 9px;
-  color: #f3dfb4;
-  border: 1px solid rgba(201, 162, 74, 0.42);
-  background-image:
-    linear-gradient(180deg, rgba(255, 236, 190, 0.10), rgba(0, 0, 0, 0.26)),
-    var(--tex-wood);
-  background-size: auto, 300px 300px;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 240, 200, 0.16),
-    0 2px 5px rgba(0, 0, 0, 0.28);
-}
-.ph-seal {
-  display: grid;
-  place-items: center;
-  width: 23px;
-  height: 23px;
-  border-radius: 50%;
-  color: #ffe3a2;
-  border: 1px solid rgba(230, 199, 120, 0.65);
-  background: radial-gradient(circle at 35% 30%, rgba(255, 224, 160, 0.22), rgba(60, 36, 12, 0.3));
-  box-shadow: inset 0 0 0 2px rgba(30, 18, 6, 0.35);
-}
-.ph-title {
-  font-size: 13.5px;
-  letter-spacing: 3px;
-  color: #f6e4bd;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
-}
-.ph-rule {
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(90deg, rgba(201, 162, 74, 0.45), transparent);
-}
-.ph-meta {
-  font-size: 10.5px;
-  color: rgba(241, 220, 176, 0.72);
-  letter-spacing: 1px;
-  font-family: var(--font-num);
-}
 /* 结束回合悬浮按钮：棋盘（左侧 70%）右下角 */
 .end-turn-fab {
   position: fixed;
@@ -207,8 +153,6 @@ onBeforeUnmount(() => {
   margin: 4px 0 8px;
 }
 .rotate-card p { margin: 4px 0; font-size: 17px; letter-spacing: 2px; }
-html.is-mobile .panel-head { height: 31px; margin-bottom: 4px; }
-html.is-mobile .ph-title { font-size: 12px; letter-spacing: 2px; }
 .rotate-sub { font-size: 12px; color: #b99a6a; letter-spacing: 1px; }
 @keyframes spin2 { to { transform: rotate(360deg); } }
 </style>

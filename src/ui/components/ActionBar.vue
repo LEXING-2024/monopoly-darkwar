@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { store } from '../store'
-import { ANTITRUST, RESOURCES, RESOURCE_ORDER } from '../../core/config'
+import { ANTITRUST, BRIDGES, BRIDGE_PRICING, MARKET_MANIPULATION, MONOPOLY_WIN, RESOURCES, RESOURCE_ORDER } from '../../core/config'
 import { monopolyInfo, monopolyTargets } from '../../core/events'
 import type { ResourceType, TradeOffer } from '../../core/types'
 import Icon from './Icon.vue'
@@ -154,9 +154,37 @@ async function submitTrade(): Promise<void> {
   tradeOpen.value = false
 }
 
-// ---- 举报 / 游说 ----
+// ---- 举报 / 游说 / 市场操纵 ----
 const reportOpen = ref(false)
 const lobbyOpen = ref(false)
+const marketOpen = ref(false)
+/** 我当前可操纵的资源（份额达门槛） */
+const manipulable = computed(() => {
+  if (!game.value || !me.value) return []
+  return game.value.manipulableResources(me.value.id).map(r => ({
+    res: r,
+    share: game.value!.resourceShare(me.value!.id, r),
+  }))
+})
+const marketLeft = computed(() => s.value?.ops.market ?? 0)
+/** 已达垄断线（70%）的资源——可断供（掐对手现金流），比 50% 的定价权更高一档 */
+const blockable = computed(() => {
+  if (!game.value || !me.value) return []
+  return (RESOURCE_ORDER as readonly ResourceType[])
+    .filter(r => game.value!.resourceShare(me.value!.id, r) >= MONOPOLY_WIN.terrainRatio)
+    .map(r => ({ res: r, share: game.value!.resourceShare(me.value!.id, r) }))
+})
+const bridgePriceLeft = computed(() => s.value?.ops.bridgePrice ?? 0)
+/** 我拥有的、可提价的桥（已升级且有收费、未关闭） */
+const myBridges = computed(() => {
+  if (!s.value || !me.value) return []
+  return s.value.tiles
+    .filter(t => t.type === 'bridge' && t.owner === me.value!.id && t.bridgeLevel >= BRIDGE_PRICING.minLevel && t.bridgeClosed <= 0)
+    .map(t => {
+      const cfg = BRIDGES[t.index as 18 | 53]
+      return { index: t.index, name: t.name, level: t.bridgeLevel, toll: cfg ? cfg.tolls[t.bridgeLevel] : 0 }
+    })
+})
 
 function doSell(): void {
   const units = Math.min(sell.units, me.value?.resources[sell.res] ?? 0)
@@ -199,6 +227,17 @@ function doSell(): void {
           <span class="at-icon"><Icon name="briefcase" :size="17" /></span>
           <span class="at-text"><b>游说</b><i>降低被举报率</i></span>
         </button>
+        <button
+          v-if="manipulable.length || myBridges.length" class="action-tile market"
+          :class="{ spent: marketLeft <= 0 && bridgePriceLeft <= 0 }"
+          @click="marketOpen = !marketOpen"
+        >
+          <span class="at-icon"><Icon name="trade" :size="17" /></span>
+          <span class="at-text">
+            <b>垄断手段</b>
+            <i>{{ blockable.length ? '断供 · 定价 · 设卡' : manipulable.length ? '资源限产 · 价格战' : '桥梁提价设卡' }}</i>
+          </span>
+        </button>
         <button class="action-tile danger resign" @click="game?.resign()">
           <span class="at-icon"><Icon name="flag" :size="17" /></span>
           <span class="at-text"><b>认输</b><i>退出本局</i></span>
@@ -231,6 +270,57 @@ function doSell(): void {
           @click="game?.lobbySelf(lv); lobbyOpen = false"
         >游说 {{ lv }} 级（￥{{ ANTITRUST.lobby[lv - 1].cost }}，成功率 -{{ lv * 10 }}%）</button>
         <button class="btn small" @click="lobbyOpen = false">取消</button>
+      </div>
+
+      <!-- 垄断手段菜单（资源定价 + 桥梁设卡） -->
+      <div v-if="marketOpen && myTurn" class="submenu">
+        <template v-if="manipulable.length">
+          <div class="menu-tip">资源定价：持有 ≥{{ MARKET_MANIPULATION.minShare * 100 }}% 的可操纵，每回合 1 次，影响全桌</div>
+          <template v-if="marketLeft > 0">
+            <div v-for="m in manipulable" :key="m.res" class="market-group">
+              <div class="market-group-title">{{ RESOURCES[m.res].icon }} {{ RESOURCES[m.res].name }}（份额 {{ Math.round(m.share * 100) }}%）</div>
+              <button
+                class="btn small" :disabled="me.cash < MARKET_MANIPULATION.limitCost"
+                @click="game?.manipulateMarket(m.res, 'limit'); marketOpen = false"
+              >限产抬价（￥{{ MARKET_MANIPULATION.limitCost }}，市价 +{{ (MARKET_MANIPULATION.limitFactor - 1) * 100 }}%，持有者受益）</button>
+              <button
+                class="btn small danger" :disabled="me.cash < MARKET_MANIPULATION.warCost"
+                @click="game?.manipulateMarket(m.res, 'war'); marketOpen = false"
+              >价格战（￥{{ MARKET_MANIPULATION.warCost }}，市价 {{ (MARKET_MANIPULATION.warFactor - 1) * 100 }}%，打击卖家·会结仇）</button>
+            </div>
+          </template>
+          <div v-else class="menu-tip">本回合的资源操纵次数已用完</div>
+        </template>
+
+        <template v-if="blockable.length">
+          <div class="menu-tip">断供（达 {{ MONOPOLY_WIN.terrainRatio * 100 }}% 垄断线）：封锁销路，其他人卖该资源只能拿半价——用于掐断对手现金流</div>
+          <template v-if="marketLeft > 0">
+            <div v-for="b in blockable" :key="'b' + b.res" class="market-group">
+              <div class="market-group-title">{{ RESOURCES[b.res].icon }} {{ RESOURCES[b.res].name }}（份额 {{ Math.round(b.share * 100) }}%）</div>
+              <button
+                class="btn small danger" :disabled="me.cash < MARKET_MANIPULATION.dumpCost"
+                @click="game?.blockSupply(b.res); marketOpen = false"
+              >断供（￥{{ MARKET_MANIPULATION.dumpCost }}，他人卖价 ×{{ MARKET_MANIPULATION.dumpFactor }}，持续 {{ MARKET_MANIPULATION.dumpTurns }} 轮）</button>
+            </div>
+          </template>
+          <div v-else class="menu-tip">本回合的操纵次数已用完</div>
+        </template>
+
+        <template v-if="myBridges.length">
+          <div class="menu-tip">桥梁设卡：提高自己那座桥的过路费，对手可绕行 3 步回避</div>
+          <template v-if="bridgePriceLeft > 0">
+            <div v-for="b in myBridges" :key="b.index" class="market-group">
+              <div class="market-group-title">🌉 {{ b.name }}（{{ b.level }} 级，现收 ￥{{ b.toll }}）</div>
+              <button
+                class="btn small danger" :disabled="me.cash < BRIDGE_PRICING.cost"
+                @click="game?.priceBridge(b.index); marketOpen = false"
+              >提价 {{ Math.round((BRIDGE_PRICING.factor - 1) * 100) }}%（￥{{ BRIDGE_PRICING.cost }}，持续 {{ BRIDGE_PRICING.duration }} 轮）</button>
+            </div>
+          </template>
+          <div v-else class="menu-tip">本回合的提价次数已用完</div>
+        </template>
+
+        <button class="btn small" @click="marketOpen = false">取消</button>
       </div>
 
       <!-- 卖资源 -->
@@ -393,6 +483,12 @@ function doSell(): void {
 .action-tile.trade { --act: #2e6a46; --act-bg: #e3f0dd; --act-line: #4f8a62; }
 .action-tile.report { --act: #a53a2b; --act-bg: #f6e0d6; --act-line: #b65b48; }
 .action-tile.lobby { --act: #6a4a8f; --act-bg: #ebe1f2; --act-line: #8b6dab; }
+.action-tile.market { --act: #8a5a12; --act-bg: #f6e9c4; --act-line: #b8872c; }
+.action-tile.market.spent { opacity: 0.55; filter: grayscale(0.4); }
+.market-group { margin: 6px 0; padding-bottom: 5px; border-bottom: 1px dotted rgba(138,95,31,0.35); }
+.market-group:last-of-type { border-bottom: 0; }
+.market-group-title { font-size: 12px; font-weight: bold; color: #6a4a18; margin-bottom: 4px; }
+.market-group .btn { margin: 2px 0; }
 .action-tile.danger, .action-tile.resign { color: #7c2118; border-color: rgba(140, 54, 40, 0.42); background-image: var(--tex-paper), linear-gradient(180deg, #f8e4d8, #edc8b8); --act: #8c2a1f; --act-bg: #fae6dc; --act-line: #a94a36; }
 .at-icon { color: var(--act); border-color: var(--act-line); background: radial-gradient(circle at 36% 30%, #fffdf6, var(--act-bg)); }
 .action-tile:hover { border-left-color: var(--act); }

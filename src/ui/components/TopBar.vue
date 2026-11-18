@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { backToMenu, saveGame, setVolume, store, toggleMute } from '../store'
+import { backToMenu, saveGame, store, toggleMute } from '../store'
 import {
   RENT_STALL_MAX, RENT_STALL_PER_ROUND, RENT_STALL_START,
   RESOURCES, RESOURCE_ORDER, SEASONS,
 } from '../../core/config'
+import { industryLeader } from '../../core/market'
+import type { ResourceType } from '../../core/types'
 import Icon from './Icon.vue'
 
 const emit = defineEmits<{ (e: 'open-help'): void }>()
@@ -16,23 +18,23 @@ const seasonIcon = computed(() => s.value?.season ?? 'spring')
 const typhoon = computed(() => s.value?.typhoon ?? null)
 const chains = computed(() => s.value?.chains ?? [])
 
-// GDP 涨跌（股市惯例：红涨绿跌）——较上一轮的创造型总资产（扣除无偿发放）
-const gdpTrend = computed(() => {
-  if (!s.value) return { arrow: '—', cls: 'gdp-flat', delta: 0, pct: null as number | null }
-  const delta = s.value.gdp - s.value.gdpPrev
-  const pct = s.value.gdpPrev > 0 ? (delta / s.value.gdpPrev) * 100 : null
-  if (delta > 0) return { arrow: '▲', cls: 'gdp-up', delta, pct }
-  if (delta < 0) return { arrow: '▼', cls: 'gdp-down', delta, pct }
-  return { arrow: '—', cls: 'gdp-flat', delta, pct }
+// 总财富涨跌（股市惯例：红涨绿跌）——较上一轮的创造型总资产（扣除无偿发放）
+const wealthTrend = computed(() => {
+  if (!s.value) return { arrow: '—', cls: 'wealth-flat', delta: 0, pct: null as number | null }
+  const delta = s.value.totalWealth - s.value.totalWealthPrev
+  const pct = s.value.totalWealthPrev > 0 ? (delta / s.value.totalWealthPrev) * 100 : null
+  if (delta > 0) return { arrow: '▲', cls: 'wealth-up', delta, pct }
+  if (delta < 0) return { arrow: '▼', cls: 'wealth-down', delta, pct }
+  return { arrow: '—', cls: 'wealth-flat', delta, pct }
 })
-const gdpPctText = computed(() => {
-  const p = gdpTrend.value.pct
+const wealthPctText = computed(() => {
+  const p = wealthTrend.value.pct
   if (p === null) return ''
   return `${p > 0 ? '+' : ''}${p.toFixed(1)}%`
 })
 const fmtMoney = (n: number): string => Math.round(n).toLocaleString()
 
-// 景气状态展示（每轮末按 GDP 涨跌评估；危机持续 5 轮）
+// 景气状态展示（每轮末按总财富涨跌评估；危机持续 5 轮）
 const CLIMATE_UI: Record<string, { name: string; icon: string; cls: string; tip: string }> = {
   boom: { name: '繁荣', icon: 'arrowUp', cls: 'cl-boom', tip: '资源价格 +10%、租金 +10%、建筑费用 -10%' },
   normal: { name: '正常', icon: 'summer', cls: 'cl-normal', tip: '经济平稳，无修正' },
@@ -50,6 +52,14 @@ const rentStallPct = computed(() => {
   )
   return Math.round(bonus * 100)
 })
+
+/** 该资源的行业龙头（拥有最多同类生产建筑者），无则 null */
+function leaderName(res: ResourceType): string | null {
+  const g = store.game
+  if (!g) return null
+  const id = industryLeader(g, res)
+  return id === null ? null : (s.value?.players[id]?.name ?? null)
+}
 
 // 市场行情（紧凑显示于顶栏）：价格相对基准的涨跌
 function trend(res: (typeof RESOURCE_ORDER)[number]): string {
@@ -90,33 +100,21 @@ onBeforeUnmount(() => {
 const menuOpen = ref(false)
 // 市场行情详情弹层（点击市场条展开，点外部关闭）
 const marketOpen = ref(false)
-
-function onVolume(e: Event): void {
-  const input = e.target as HTMLInputElement
-  setVolume(Number(input.value) / 100)
-}
 </script>
 
 <template>
   <header class="topbar">
-    <div class="brand" v-if="s" aria-label="大富翁·暗战">
-      <span class="brand-seal">暗</span>
-      <span class="brand-word">商路<em>暗战</em></span>
-    </div>
     <div class="top-left">
       <span class="chip season-chip" v-if="s">
         <Icon :name="seasonIcon" :size="14" />
         <span>第{{ s.year }}年 · {{ season?.name }}季</span>
         <span class="season-turn">本季 {{ s.seasonTurn }}/{{ s.seasonLen }} 回合</span>
       </span>
-      <span class="chip round-chip" v-if="s" title="1 回合 = 全部存活玩家各行动一次">
-        第 <b>{{ s.totalRound ?? s.round }}</b> 回合
-      </span>
       <span
-        v-if="s" class="chip gdp-chip"
-        :title="`GDP：全体存活玩家总资产（扣除起点奖励/卡牌补贴等无偿发放），较上轮 ${gdpTrend.delta >= 0 ? '+' : ''}￥${fmtMoney(gdpTrend.delta)}`"
-      ><Icon name="coin" :size="13" /> GDP ￥{{ fmtMoney(s.gdp) }}
-        <b class="gdp-arrow" :class="gdpTrend.cls">{{ gdpTrend.arrow }}<span v-if="gdpPctText" class="gdp-pct"> {{ gdpPctText }}</span></b>
+        v-if="s" class="chip wealth-chip"
+        :title="`总财富：全体存活玩家总资产（扣除起点奖励/卡牌补贴等无偿发放），较上轮 ${wealthTrend.delta >= 0 ? '+' : ''}￥${fmtMoney(wealthTrend.delta)}`"
+      ><Icon name="coin" :size="13" /> 总财富 ￥{{ fmtMoney(s.totalWealth) }}
+        <b class="wealth-arrow" :class="wealthTrend.cls">{{ wealthTrend.arrow }}<span v-if="wealthPctText" class="wealth-pct"> {{ wealthPctText }}</span></b>
       </span>
       <span
         v-if="climateUi" class="chip climate-chip" :class="climateUi.cls" :title="climateUi.tip"
@@ -149,10 +147,14 @@ function onVolume(e: Event): void {
       <div v-if="marketOpen" class="market-pop">
         <div class="mp-title"><Icon name="trade" :size="14" /> 市场行情</div>
         <div v-for="res in RESOURCE_ORDER" :key="'p' + res" class="mp-row">
-          <span><span class="res-chip" :class="`res-${res}`"><Icon :name="res" :size="13" /></span> {{ RESOURCES[res].name }}</span>
+          <span>
+            <span class="res-chip" :class="`res-${res}`"><Icon :name="res" :size="13" /></span> {{ RESOURCES[res].name }}
+            <!-- 行业龙头：该类生产建筑最多的人，卖该资源 +10% -->
+            <em v-if="leaderName(res)" class="mp-leader" :title="`${leaderName(res)} 拥有最多${RESOURCES[res].name}生产建筑，卖价 +10%`">👑 {{ leaderName(res) }}</em>
+          </span>
           <span class="mp-val" :class="{ up: trend(res) === '↑', down: trend(res) === '↓' }">￥{{ s.market[res] }} <b class="mp-trend">{{ trend(res) }}</b></span>
         </div>
-        <div class="mp-hint">相对基准价 ±12% 显示涨跌 · 红涨绿跌</div>
+        <div class="mp-hint">相对基准价 ±12% 显示涨跌 · 红涨绿跌 · 👑 行业龙头卖该资源 +10%</div>
       </div>
     </div>
     <div class="top-right">
@@ -163,14 +165,6 @@ function onVolume(e: Event): void {
         :style="{ background: current.color, color: '#fff' }"
       >{{ current.name }} {{ current.isAI ? '(AI)' : '' }}</span>
       <div class="desktop-actions">
-        <label class="volume-control" title="主音量">
-          <Icon name="volume" :size="15" />
-          <input
-            class="volume-slider" type="range" min="0" max="100" step="1"
-            :value="Math.round(store.volume * 100)" @input="onVolume"
-            aria-label="主音量"
-          />
-        </label>
         <button class="icon-btn" @click="saveGame" title="保存对局（当前回合结束后存档）"><Icon name="save" :size="16" /></button>
         <button class="icon-btn" :class="{ danger: confirmHome }" @click="onHome" title="返回首页">
           <template v-if="confirmHome"><span class="confirm-word">返回？</span></template>
@@ -195,15 +189,6 @@ function onVolume(e: Event): void {
             <Icon :name="store.muted ? 'volume' : 'mute'" :size="15" />
             {{ store.muted ? '开启音效' : '静音' }}
           </button>
-          <label class="menu-volume">
-            <Icon name="volume" :size="15" />
-            <span>音量</span>
-            <input
-              class="volume-slider" type="range" min="0" max="100" step="1"
-              :value="Math.round(store.volume * 100)" @input="onVolume"
-              aria-label="主音量"
-            />
-          </label>
           <button class="menu-item" @click="emit('open-help'); menuOpen = false"><Icon name="help" :size="15" /> 规则说明</button>
         </div>
       </div>
@@ -246,51 +231,6 @@ function onVolume(e: Event): void {
   pointer-events: none;
 }
 
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex: none;
-  min-width: 104px;
-  white-space: nowrap;
-  padding: 3px 9px 3px 4px;
-  border-radius: 9px;
-  border: 1px solid rgba(201, 162, 74, 0.55);
-  background-image:
-    linear-gradient(180deg, rgba(255, 236, 190, 0.10), rgba(0, 0, 0, 0.20)),
-    var(--tex-wood);
-  background-size: auto, 200px 200px;
-  box-shadow: inset 0 0 0 1px rgba(255, 240, 200, 0.08), 0 2px 5px rgba(0, 0, 0, 0.35);
-}
-.brand-seal {
-  display: grid;
-  place-items: center;
-  width: 25px;
-  height: 25px;
-  border-radius: 5px;
-  color: #f7e3c2;
-  font-size: 15px;
-  line-height: 1;
-  background: linear-gradient(160deg, #b44234, #7e2419);
-  border: 1px solid #5c170f;
-  box-shadow: inset 0 1px 0 rgba(255, 220, 190, 0.35), 0 1px 2px rgba(0, 0, 0, 0.4);
-}
-.brand-word {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  color: #f3dfb4;
-  font-size: 11px;
-  letter-spacing: 2px;
-  line-height: 1.1;
-}
-.brand-word em {
-  font-style: normal;
-  font-size: 13px;
-  color: #ffe3a2;
-  letter-spacing: 3px;
-}
-
 /* 顶栏状态：一条连续的纸带，而不是一堆独立小方块 */
 .top-left {
   flex: 1 1 auto;
@@ -330,8 +270,6 @@ function onVolume(e: Event): void {
 .top-left .chip :deep(.ui-icon) { color: var(--brass-3); opacity: 0.9; }
 .top-left .season-chip { color: var(--ink); font-weight: bold; }
 .top-left::-webkit-scrollbar { display: none; }
-.top-left .round-chip { color: #5a3a10; background: none; border-color: transparent; }
-.top-left .round-chip b { color: var(--seal); font-size: 14px; }
 .top-left .chip.warn,
 .top-left .chip.order-chip,
 .top-left .chip.typhoon,
@@ -377,13 +315,6 @@ function onVolume(e: Event): void {
 .chip :deep(.ui-icon) { color: var(--brass-3); }
 .season-chip { background-image: linear-gradient(180deg, #f9e7b4, #e5c479); border-color: #9a6a22; }
 .season-turn { opacity: 0.72; font-size: 10.5px; }
-.round-chip {
-  background-image: linear-gradient(180deg, #f7d889, #dfb44f);
-  border-color: #7c5414;
-  font-size: 12.5px;
-  font-weight: bold;
-}
-.round-chip b { font-size: 15px; color: #4a2d08; font-family: var(--font-num); }
 .chip.warn {
   background-image: linear-gradient(180deg, #d9958a, #b25a4a);
   border-color: #6e2418;
@@ -393,9 +324,9 @@ function onVolume(e: Event): void {
   background-image: linear-gradient(180deg, #f3c17e, #d98d3c);
   border-color: #8a4d15;
 }
-/* GDP 涨跌：红涨绿跌（股市惯例）。加浅色底 + 更深文字，纸带上也能一眼分辨。 */
-.gdp-chip { font-variant-numeric: tabular-nums; }
-.gdp-arrow {
+/* 总财富涨跌：红涨绿跌（股市惯例）。加浅色底 + 更深文字，纸带上也能一眼分辨。 */
+.wealth-chip { font-variant-numeric: tabular-nums; }
+.wealth-arrow {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -407,10 +338,10 @@ function onVolume(e: Event): void {
   font-weight: 800;
   line-height: 1.45;
 }
-.gdp-up { color: #fff8ef; background: var(--rise); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22); }
-.gdp-down { color: #f2fff5; background: var(--fall); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18); }
-.gdp-flat { color: #6b5738; background: rgba(117, 96, 62, 0.10); }
-.gdp-pct { font-size: 10px; opacity: 0.95; font-weight: 700; }
+.wealth-up { color: #fff8ef; background: var(--rise); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22); }
+.wealth-down { color: #f2fff5; background: var(--fall); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18); }
+.wealth-flat { color: #6b5738; background: rgba(117, 96, 62, 0.10); }
+.wealth-pct { font-size: 10px; opacity: 0.95; font-weight: 700; }
 /* 景气徽章 */
 .climate-chip { font-weight: bold; }
 .climate-chip.cl-boom { background-image: linear-gradient(180deg, #f2b6a8, #d97765); border-color: #8e3527; }
@@ -442,7 +373,15 @@ function onVolume(e: Event): void {
   position: relative;
   box-shadow: inset 0 1px 0 rgba(255, 252, 238, 0.7), 0 1px 2px rgba(0, 0, 0, 0.28);
 }
-.top-market:hover { filter: brightness(1.06); }
+/* 注意：此处不能用 filter——filter 会创建包含块，使子元素 .market-backdrop 的
+   position:fixed 相对本元素定位（而非视口），鼠标移到遮罩上又触发 hover，
+   造成遮罩在「收缩/铺满」间反复振荡（闪烁）。改用 box-shadow 做 hover 反馈。 */
+.top-market:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 252, 238, 0.9),
+    0 1px 4px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(201, 162, 74, 0.55);
+}
 .top-market :deep(.ui-icon) { color: var(--brass-3); }
 .market-item { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 /* 资源图标不再共用黄铜色：木/牛/油/鱼各有专属小色牌，远看也能区分 */
@@ -531,6 +470,12 @@ function onVolume(e: Event): void {
 .mp-row .up .mp-trend { color: #fff8ef; background: var(--rise); }
 .mp-row .down .mp-trend { color: #f2fff5; background: var(--fall); }
 .mp-hint { margin-top: 6px; font-size: 10.5px; color: var(--ink-3); }
+/* 行业龙头标记：金色小字，标在资源名后 */
+.mp-leader {
+  font-style: normal; font-size: 10px; margin-left: 5px; padding: 0 4px;
+  color: #7a4f08; background: linear-gradient(180deg, #ffe9b0, #f2c766);
+  border: 1px solid rgba(150, 100, 20, 0.5); border-radius: 4px; white-space: nowrap;
+}
 .chip.player { border: 1px solid rgba(40, 20, 4, 0.55); font-weight: bold; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45); }
 .your-turn {
   display: inline-flex;
@@ -575,39 +520,6 @@ function onVolume(e: Event): void {
 .icon-btn:hover { filter: brightness(1.2); }
 .icon-btn:active { transform: translateY(1px); }
 .icon-btn.danger { background-image: linear-gradient(180deg, #c46a56, #8a2f20); border-color: #5d1409; }
-/* 主音量：桌面端常驻一条窄滑杆，手机端收进菜单 */
-.volume-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 30px;
-  padding: 0 7px;
-  border-radius: 8px;
-  color: #f3e2bd;
-  background: rgba(30, 18, 6, 0.18);
-  border: 1px solid rgba(201, 162, 74, 0.35);
-}
-.volume-control :deep(.ui-icon) { color: var(--brass-3); opacity: 0.95; }
-.volume-slider {
-  width: 64px;
-  height: 16px;
-  margin: 0;
-  accent-color: #c9a24a;
-  cursor: pointer;
-}
-.menu-volume {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  color: var(--ink);
-  font-size: 13px;
-  border: 1px solid rgba(138, 95, 31, 0.5);
-  border-radius: 7px;
-  background: rgba(255, 248, 226, 0.35);
-}
-.menu-volume :deep(.ui-icon) { color: var(--brass-3); }
-.menu-volume .volume-slider { flex: 1; width: auto; accent-color: #a5711f; }
 .confirm-word { font-size: 10px; letter-spacing: -0.5px; white-space: nowrap; }
 /* 手机端折叠菜单 */
 .mobile-menu { display: none; position: relative; }
@@ -656,7 +568,6 @@ html.is-mobile .season-turn { display: none; }
 html.is-mobile .m-price { display: none; }
 html.is-mobile .chain-left { display: none; }
 html.is-mobile .chip { padding: 2px 7px; font-size: 11.5px; }
-html.is-mobile .round-chip { padding: 2px 8px; font-size: 12px; }
 html.is-mobile .top-market { padding: 2px 7px; font-size: 11.5px; gap: 4px; }
 html.is-mobile .your-turn { font-size: 12px; }
 </style>

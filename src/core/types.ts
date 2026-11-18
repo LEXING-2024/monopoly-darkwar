@@ -46,7 +46,13 @@ export interface Building {
 
 // ============ 玩家 ============
 
-export interface OutputMod { factor: number; turns: number; label: string }
+export interface OutputMod {
+  factor: number
+  turns: number
+  label: string
+  /** 仅 bridgeTollMods 使用：限定作用于哪座桥（不填 = 全局，兼容旧数据） */
+  bridge?: number
+}
 
 export interface PlayerStatus {
   moveMod: number             // 下次移动修正（休息 -1）
@@ -110,7 +116,7 @@ export interface AiProfile {
 }
 
 export interface AiMemoryEntry {
-  kind: 'report'
+  kind: 'report' | 'pricewar'
   from: number            // 对方玩家 id
   turn: number            // 发生时的行动计数
 }
@@ -187,6 +193,13 @@ export interface ChainState {
   data: Record<string, any>
 }
 
+/** 垄断速胜冲刺状态：某玩家对某地形连续达标的轮数（不足则清空） */
+export interface MonopolyHold {
+  playerId: number
+  terrain: Terrain
+  rounds: number
+}
+
 export interface LogEntry {
   turn: number     // 行动计数
   round: number    // 回合数（1 回合 = 全员各行动一次），日志按此标注
@@ -214,9 +227,11 @@ export interface TurnOps {
   repair: number
   explore: number
   bridge: number
+  market: number        // 市场操纵：每回合 1 次
+  bridgePrice: number   // 桥梁提价：每回合 1 次
 }
 
-/** 经济景气状态（每轮按 GDP 涨跌评估；危机持续 5 轮后解除重评） */
+/** 经济景气状态（每轮按总财富涨跌评估；危机持续 5 轮后解除重评） */
 export type ClimateStatus = 'boom' | 'normal' | 'recession' | 'crisis'
 
 export interface GameState {
@@ -254,6 +269,8 @@ export interface GameState {
   winner: number | null
   /** 终局原因：淘汰至最后一人 / 垄断判决 / 行动数上限按资产判定 */
   endReason: 'last-standing' | 'monopoly' | 'timeout' | null
+  /** 垄断速胜冲刺进度：连续达标者；轮末更新，达标中断即清空 */
+  monopolyHold: MonopolyHold | null
   bankruptOrder: number[]
   log: LogEntry[]
   /** 待结算的赌场下注：每位玩家在自己下一次转盘后结算（多人先后下注不会互相覆盖） */
@@ -265,10 +282,12 @@ export interface GameState {
   aiBrains: (AiBrain | null)[]        // 每玩家 AI 大脑（人类为 null），随存档保存
   aiDifficulty: AiDifficulty          // 本局 AI 难度（开局统一选择）
   marketPressure: Record<ResourceType, number>  // 本轮各资源净卖出量（轮首结算压力后清零）
+  /** 断供：垄断者封锁某资源销路，其他人卖出只能拿半价（轮末递减） */
+  supplyBlocks: { resource: ResourceType; playerId: number; turns: number }[]
   ops: TurnOps                    // 人类每回合操作配额剩余（进入行动阶段重置，修理不限）
-  gdp: number                     // GDP：全体存活玩家总资产（轮末统计）
-  gdpPrev: number                 // 上一轮 GDP（顶栏涨跌箭头对比用）
-  climate: ClimateStatus          // 经济景气状态（轮末按 GDP 涨跌评估）
+  totalWealth: number             // 总财富：全体存活玩家总资产（轮末统计）
+  totalWealthPrev: number         // 上一轮总财富（顶栏涨跌箭头对比用）
+  climate: ClimateStatus          // 经济景气状态（轮末按总财富涨跌评估）
   climateTurns: number            // 危机剩余轮数（解除后重新评估）
   recessionStreak: number         // 连续衰退轮数（累计达标转危机）
   roadblock: number | null        // 路障所在格（下一个经过的玩家停住，随后消失）
@@ -289,8 +308,9 @@ export type Prompt =
   | { type: 'notice'; title: string; text: string; icon?: string; player: number; auto?: boolean }
   | { type: 'buy'; tile: number; price: number; player: number }
   | { type: 'card'; cardId: string; category: 'fate' | 'chance'; name: string; desc: string; icon: string; canDecline: boolean; player: number }
-  | { type: 'choose-resource'; title: string; desc: string; options: ResourceType[]; player: number }
+  | { type: 'choose-resource'; title: string; desc: string; options: ResourceType[]; player: number; cardId?: string }
   | { type: 'choose-tile'; title: string; desc: string; tiles: number[]; player: number; cardId: string }
+  | { type: 'choose-terrain'; title: string; desc: string; options: Terrain[]; player: number; cardId: string }
   | { type: 'join-report'; player: number; target: number; cost: number; currentProb: number }
   | { type: 'start-stop'; player: number; repairCost: number; damagedCount: number; restPenalty: boolean }
   | { type: 'casino'; player: number; cash: number }
@@ -342,6 +362,11 @@ export interface GameApi {
   exploreAt(tileIndex: number): boolean
   repairBridge(tileIndex: number): boolean
   sellResources(res: ResourceType, units: number): boolean
+  resourceShare(playerId: number, res: ResourceType): number
+  manipulableResources(playerId: number): ResourceType[]
+  manipulateMarket(res: ResourceType, kind: 'limit' | 'war'): boolean
+  blockSupply(res: ResourceType): boolean
+  priceBridge(tileIndex: number): boolean
   lobbySelf(level: 1 | 2 | 3): boolean
   reportTarget(targetId: number): Promise<boolean>
   resign(): Promise<void>

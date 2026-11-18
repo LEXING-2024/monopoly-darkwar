@@ -4,7 +4,7 @@ import type { AiBrain, GameState } from '../types'
 import { getBrain } from './brain'
 
 /** 记录事件到大脑记忆并累加情绪（被攻击 +0.25） */
-export function remember(game: GameState, playerId: number, otherId: number, kind: 'report'): void {
+export function remember(game: GameState, playerId: number, otherId: number, kind: 'report' | 'pricewar'): void {
   const brain = getBrain(game, playerId)
   if (!brain) return
   brain.memory.push({ kind, from: otherId, turn: game.turn })
@@ -15,4 +15,9 @@ export function remember(game: GameState, playerId: number, otherId: number, kin
 /** 对手举报过我的次数 */
 export function reportCount(brain: AiBrain, otherId: number): number {
   return brain.memory.filter(m => m.from === otherId && m.kind === 'report').length
+}
+
+/** 对手用价格战攻击过我的次数 */
+export function pricewarCount(brain: AiBrain, otherId: number): number {
+  return brain.memory.filter(m => m.from === otherId && m.kind === 'pricewar').length
 }

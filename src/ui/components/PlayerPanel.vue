@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { store } from '../store'
-import { RESOURCES, RESOURCE_ORDER } from '../../core/config'
+import { ANTITRUST, MONOPOLY_WIN, RESOURCES, RESOURCE_ORDER } from '../../core/config'
+import { contiguousRun } from '../../core/economy'
 import type { ResourceType, Terrain } from '../../core/types'
 import Icon from './Icon.vue'
 
@@ -38,6 +39,44 @@ function viewPlayer(id: number): void {
   viewId.value = viewId.value === id ? -1 : id
 }
 const fmt = (n: number): string => Math.round(n).toLocaleString()
+
+/** 各玩家的最高单地形占比（垄断进度条用），纯 state 计算不依赖 game 实例 */
+const TERRAINS: Terrain[] = ['forest', 'plateau', 'desert', 'coast']
+const monopolyProgress = computed(() => {
+  const map = new Map<number, { ratio: number; terrain: Terrain }>()
+  if (!s.value) return map
+  const totals: Record<Terrain, number> = { forest: 0, plateau: 0, desert: 0, coast: 0 }
+  s.value.tiles.forEach(t => {
+    if (t.type === 'terrain' && t.terrain !== 'none') totals[t.terrain as Terrain]++
+  })
+  for (const p of s.value.players) {
+    if (!p.alive) continue
+    const owned: Record<Terrain, number> = { forest: 0, plateau: 0, desert: 0, coast: 0 }
+    s.value.tiles.forEach(t => {
+      if (t.type === 'terrain' && t.owner === p.id && t.terrain !== 'none') owned[t.terrain as Terrain]++
+    })
+    let best: Terrain = 'forest', ratio = 0
+    for (const ter of TERRAINS) {
+      const r = totals[ter] ? owned[ter] / totals[ter] : 0
+      if (r > ratio) { ratio = r; best = ter }
+    }
+    map.set(p.id, { ratio, terrain: best })
+  }
+  return map
+})
+const TERRAIN_LABEL: Record<Terrain, string> = { forest: '森林', plateau: '高原', desert: '沙漠', coast: '沿海' }
+/** 查看对象各连片段长度（≥3 时在资产格上显示"连N"，代表整片开发加成） */
+const contiguousMap = computed(() => {
+  const map = new Map<number, number>()
+  const g = store.game
+  if (!g || !viewed.value) return map
+  for (const t of viewedTiles.value) {
+    if (t.type === 'terrain') map.set(t.index, contiguousRun(g, t))
+  }
+  return map
+})
+const hold = computed(() => s.value?.monopolyHold ?? null)
+const isCharging = (pid: number): boolean => hold.value?.playerId === pid
 </script>
 
 <template>
@@ -74,7 +113,24 @@ const fmt = (n: number): string => Math.round(n).toLocaleString()
         @click="p.alive && viewPlayer(p.id)"
       >
         <span class="p-token" :style="{ background: p.color }" />
-        <span class="p-name">{{ p.name }}<em v-if="p.isAI">AI</em></span>
+        <span class="p-name-wrap">
+          <span class="p-name">{{ p.name }}<em v-if="p.isAI">AI</em></span>
+          <!-- 垄断进度条：显示该玩家最高单地形占比；到举报线变色，形成垄断时高亮 -->
+          <span
+            v-if="p.alive && monopolyProgress.get(p.id)"
+            class="mono-bar"
+            :class="{
+              warn: monopolyProgress.get(p.id)!.ratio >= ANTITRUST.terrainRatio,
+              hot: monopolyProgress.get(p.id)!.ratio >= MONOPOLY_WIN.terrainRatio,
+              charging: isCharging(p.id),
+            }"
+            :title="`${TERRAIN_LABEL[monopolyProgress.get(p.id)!.terrain]}占比 ${Math.round(monopolyProgress.get(p.id)!.ratio * 100)}%（垄断线 ${MONOPOLY_WIN.terrainRatio * 100}%）${isCharging(p.id) && hold ? ` · 已垄断 ${hold.rounds} 轮，可断供/抬价压制，也可被举报` : ''}`"
+          >
+            <i class="mono-fill" :style="{ width: `${Math.min(100, monopolyProgress.get(p.id)!.ratio * 100)}%` }" />
+            <b class="mono-mark" :style="{ left: `${MONOPOLY_WIN.terrainRatio * 100}%` }" />
+            <em v-if="isCharging(p.id) && hold" class="mono-count">垄断{{ hold.rounds }}</em>
+          </span>
+        </span>
         <span class="p-tiles" title="持有地块"><Icon name="map" :size="12" />{{ s.tiles.filter(t => t.owner === p.id).length }}</span>
         <span class="p-cash" :class="{ neg: p.alive && p.cash < 0 }">
           <template v-if="p.alive"><Icon name="coin" :size="12" />{{ fmt(p.cash) }}</template>
@@ -103,6 +159,11 @@ const fmt = (n: number): string => Math.round(n).toLocaleString()
           <span v-if="t.explored" class="reserve" :class="t.reserve">
             {{ t.reserve === 'rich' ? '富' : t.reserve === 'poor' ? '贫' : '普' }}
           </span>
+          <!-- 连片角标：连续 ≥3 块时显示，代表整片开发租金加成 -->
+          <span
+            v-if="(contiguousMap.get(t.index) ?? 0) >= 3" class="contig"
+            :title="`连片 ${contiguousMap.get(t.index)} 块 · 该段租金 +${Math.round((contiguousMap.get(t.index)! >= 5 ? 0.5 : contiguousMap.get(t.index)! >= 4 ? 0.4 : 0.25) * 100)}%`"
+          >连{{ contiguousMap.get(t.index) }}</span>
           <span class="bldg" v-if="t.buildings.length"><Icon name="building" :size="10" />{{ t.buildings.length }}</span>
           <span v-if="t.disaster" class="dis">⚠</span>
         </button>
@@ -209,8 +270,29 @@ const fmt = (n: number): string => Math.round(n).toLocaleString()
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   flex: none;
 }
-.p-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.p-name-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.p-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
 .p-name em { font-style: normal; font-size: 9.5px; color: var(--ink-3); margin-left: 3px; }
+/* 垄断进度条：细条 + 垄断线刻度；达到门槛变色，垄断中显示已维持轮数 */
+.mono-bar {
+  position: relative; display: block; height: 5px; border-radius: 3px; overflow: visible;
+  background: rgba(120, 90, 50, 0.18); border: 1px solid rgba(120, 90, 50, 0.25);
+}
+.mono-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px;
+  background: linear-gradient(90deg, #b9934f, #d9b45f); transition: width 0.3s ease;
+}
+.mono-bar.warn .mono-fill { background: linear-gradient(90deg, #c98a3a, #e0a53d); }
+.mono-bar.hot .mono-fill { background: linear-gradient(90deg, #b3261e, #d9452f); }
+.mono-bar.charging { box-shadow: 0 0 0 1px var(--bad), 0 0 5px rgba(179, 38, 30, 0.5); }
+.mono-mark {
+  position: absolute; top: -2px; width: 1px; height: 9px; background: rgba(160, 100, 40, 0.7);
+}
+.mono-mark.win { background: var(--bad); }
+.mono-count {
+  position: absolute; right: -2px; top: 5px; font-size: 8.5px; font-style: normal;
+  color: var(--bad); font-weight: bold; line-height: 1;
+}
 .p-tiles, .p-cash { display: inline-flex; align-items: center; gap: 2px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .p-cash { font-weight: bold; color: #6a4a18; min-width: 52px; justify-content: flex-end; }
 .p-cash.neg { color: var(--bad); }
@@ -246,6 +328,13 @@ const fmt = (n: number): string => Math.round(n).toLocaleString()
 .reserve.poor { color: #695844; font-weight: 600; }
 .reserve { font-size: 9.5px; }
 .bldg { display: inline-flex; align-items: center; gap: 1px; color: #6a4a18; font-size: 10px; }
+/* 连片角标：整片开发的标识，与普通资源角标区分开（金色描边） */
+.contig {
+  font-size: 9px; font-weight: 700; color: #6a3f06;
+  background: linear-gradient(180deg, #ffe6a8, #f0c25c);
+  border: 1px solid rgba(150, 100, 20, 0.55);
+  border-radius: 4px; padding: 0 3px; line-height: 1.35;
+}
 .dis { color: var(--rise-ink); font-size: 10px; font-weight: 700; }
 .inv {
   display: flex; gap: 5px; margin-top: 8px;

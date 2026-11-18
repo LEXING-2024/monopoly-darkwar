@@ -2,7 +2,7 @@
 // 注意：返回形状必须与各 prompt 调用点契约严格一致
 
 import {
-  EAST_BRIDGE, RESOURCES, WEST_BRIDGE,
+  EAST_BRIDGE, RESOURCES, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from '../config'
 import { cardMoney } from '../cards'
 import { isMonopoly } from '../events'
@@ -31,7 +31,9 @@ export function aiRespond(game: GameApi, prompt: Prompt): any {
       return { accept: shouldAcceptCard(game, prompt.player, prompt.cardId) }
     }
     case 'choose-resource':
-      return chooseResource(game, prompt.player, prompt.options)
+      return chooseResource(game, prompt.player, prompt.options, prompt.cardId)
+    case 'choose-terrain':
+      return chooseTerrain(game, prompt.player, prompt.options, prompt.cardId)
     case 'choose-tile':
       return chooseTile(game, prompt.player, prompt.tiles, prompt.cardId)
     case 'start-stop':
@@ -42,9 +44,11 @@ export function aiRespond(game: GameApi, prompt: Prompt): any {
       const p = s.players[prompt.player]
       const brain = getBrain(s, p.id)
       const rng = brainRng(brain as AiBrain)
-      // 过路费高 → 绕行；风险承受高 → 更敢省过路费（多花 3 步的机会成本）
-      const base = prompt.toll > 500 ? 0.75 : 0.35
-      const prob = Math.min(0.95, Math.max(0.05, base + (brain?.profile.riskTolerance ?? 0.5) * 0.2 - 0.1))
+      // 绕行要付出"多走 3 步"的真实机会成本，所以只有过路费真的贵才值得绕：
+      // 小额过路费（<300）绕行是亏的，不绕；提价后的高额才考虑回避。
+      const t = prompt.toll
+      const base = t >= 800 ? 0.7 : t >= 500 ? 0.45 : t >= 300 ? 0.2 : 0.05
+      const prob = Math.min(0.95, Math.max(0.02, base + (brain?.profile.riskTolerance ?? 0.5) * 0.15 - 0.075))
       const ans = rng.chance(prob)
       saveBrainRng(brain as AiBrain, rng)
       return { bypass: ans }
@@ -180,7 +184,7 @@ function shouldAcceptCard(game: GameApi, playerId: number, cardId: string): bool
   const brain = getBrain(s, playerId)
   const safety = cashSafetyLine(game, playerId)
   const cash = p.cash
-  // 卡牌费用与 GDP 挂钩：金额 = 人均 GDP × 比例（与 cards.ts 的 cardMoney 一致）
+  // 卡牌费用与总财富挂钩：金额 = 人均总财富 × 比例（与 cards.ts 的 cardMoney 一致）
   const cost = (ratio: number) => cash - cardMoney(game, ratio) >= safety * 0.5
   const lookahead = Math.max(0, brain?.profile.lookahead ?? 1)
   switch (cardId) {
@@ -234,17 +238,50 @@ function bestMarketRes(game: GameApi): ResourceType {
   return (Object.keys(RESOURCES) as ResourceType[]).sort((a, b) => s.market[b] - s.market[a])[0]
 }
 
-// ---------- 资源选择（按市价 × 前景 × 已有库存） ----------
+// ---------- 资源选择（按市价 × 前景 × 已有库存；伤害卡按"对手暴露最多"） ----------
 
-function chooseResource(game: GameApi, playerId: number, options: ResourceType[]): ResourceType {
+function chooseResource(game: GameApi, playerId: number, options: ResourceType[], cardId?: string): ResourceType {
   const s = game.state
   const p = s.players[playerId]
   const brain = getBrain(s, playerId)
   const lookahead = Math.max(0, brain?.profile.lookahead ?? 1)
+  // 行业崩盘：选对手持有生产地块最多的资源，打击面最大（自己免疫，不计自己的地块）
+  if (cardId === 'market-crash') {
+    const scored = options.map(r => ({
+      value: r,
+      score: opponentExposure(game, playerId, r),
+    }))
+    return rollAction(game, brain!, scored) ?? options[0]
+  }
   const scored = options.map(r => ({
     value: r,
     score: s.market[r] * Math.max(0.9, Math.min(1.3, priceForecast(game, r, lookahead))) * (p.resources[r] > 0 ? 1.2 : 1),
   }))
+  return rollAction(game, brain!, scored) ?? options[0]
+}
+
+/** 对手在某资源上的暴露度：对手持有的该地形地块数 × 基础产出 × 市价（不含自己） */
+function opponentExposure(game: GameApi, playerId: number, res: ResourceType): number {
+  let score = 0
+  for (const t of game.state.tiles) {
+    if (t.type !== 'terrain' || t.owner === null || t.owner === playerId) continue
+    if (!game.state.players[t.owner]?.alive) continue
+    if (TERRAIN_RESOURCE[t.terrain as Terrain] === res) score += game.state.market[res]
+  }
+  return score
+}
+
+/** 地形选择（灾害卡：选对手暴露最多的地形区） */
+function chooseTerrain(game: GameApi, playerId: number, options: Terrain[], cardId: string): Terrain {
+  const brain = getBrain(game.state, playerId)
+  const scored = options.map(terrain => {
+    const res = TERRAIN_RESOURCE[terrain]
+    return {
+      value: terrain,
+      // 暴风雪/沙尘暴：暴露度即对手在该地形的产出价值
+      score: opponentExposure(game, playerId, res),
+    }
+  })
   return rollAction(game, brain!, scored) ?? options[0]
 }
 

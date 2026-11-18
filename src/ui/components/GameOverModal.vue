@@ -15,7 +15,8 @@ const ranking = computed(() => {
 const endText = computed(() => {
   switch (s.value?.endReason) {
     case 'timeout': return '行动数达到上限，按总资产判定胜负'
-    case 'monopoly': return '垄断判决：集齐整类资源地块，直接获胜'
+    // 旧版规则（垄断可直接获胜）已移除，仅历史存档可能带此结局
+    case 'monopoly': return '垄断判决（旧版规则）：集齐整类资源地块获胜'
     default: return '淘汰了所有对手，成为唯一的幸存者'
   }
 })

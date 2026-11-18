@@ -4,7 +4,7 @@ import {
   BRIDGES, BUILDING_DEFS, FLOOD_TILES, MAX_TURNS, RESERVE_MULT, RESERVE_WEIGHTS, RESOURCES,
   SEASONS, SEASON_ORDER, TILE_COUNT, TERRAIN_RESOURCE, EAST_BRIDGE, WEST_BRIDGE,
 } from '../config'
-import { bridgeToll, exploreCost, globalRentMod, tileOutput, tileRent } from '../economy'
+import { bridgeToll, contiguousRun, exploreCost, globalRentMod, tileOutput, tileRent } from '../economy'
 import type { GameApi, ResourceType, Season, Terrain, Tile } from '../types'
 import { getBrain } from './brain'
 
@@ -54,6 +54,12 @@ export function tileValue(game: GameApi, playerId: number, tile: Tile): number {
     if (res) {
       const out = tileOutput(game, playerId, tile)
       v += out * s.market[res] * h * disasterDiscount(game, playerId, tile)
+    }
+    // 连片协同：买下后能形成/延长连片段（≥3）时，整段租金加成带来额外收益
+    const run = contiguousRun(game, tile, playerId)
+    if (run >= 3) {
+      const bonus = run >= 5 ? 0.5 : run >= 4 ? 0.4 : 0.25
+      v += tile.baseRent * visits * h * 0.6 * bonus * 2   // ×2：整段共享加成，不只是这一块
     }
   } else if (tile.type === 'bridge') {
     const cfg = BRIDGES[tile.index as typeof WEST_BRIDGE | typeof EAST_BRIDGE]

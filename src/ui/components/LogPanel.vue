@@ -28,9 +28,8 @@ const logs = computed(() => store.state?.log ?? [])
   display: flex;
   flex-direction: column;
   min-height: 0;
-  flex: 1 1 auto;
-  height: auto;
-  min-height: 178px;
+  /* 高度由 style.css 的 .panel > .panel-scroll + .paper.card 按屏幕统一分配（clamp 平滑），
+     此处不再设 flex/height，避免与其冲突导致条数忽多忽少 */
 }
 .head {
   display: flex;
@@ -86,5 +85,6 @@ const logs = computed(() => store.state?.log ?? [])
 }
 .txt { min-width: 0; word-break: break-word; }
 .empty { color: var(--ink-4); font-size: 11px; padding: 8px 0; text-align: center; }
-html.is-mobile .log-card { height: 148px; flex: 0 0 148px; min-height: 148px; }
+/* 移动端同样按屏幕高度平滑分配，避免固定高度导致条数与其他屏幕差异过大 */
+html.is-mobile .log-card { height: clamp(132px, 22dvh, 190px); flex: 0 0 auto; min-height: 0; }
 </style>

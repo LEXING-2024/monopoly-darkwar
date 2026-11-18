@@ -278,11 +278,14 @@ export class Piece {
         onDone?.()
       },
     })
-    // 影子 / 光环与棋子同步平移
+    // 影子 / 光环与棋子同步平移（两者都必须同时补间 x 与 y：
+    // 光环此前只补间 x，y 停在起点，导致纵向坐标不跟随棋子——横向正常、纵向掉队）
     scene.tweens.add({
       targets: this.shadow, x: tx, y: groundY, duration: dur, ease: 'Sine.easeInOut',
     })
-    scene.tweens.add({ targets: this.halo, x: tx, duration: dur, ease: 'Sine.easeInOut' })
+    scene.tweens.add({
+      targets: this.halo, x: tx, y: p.y + 2, duration: dur, ease: 'Sine.easeInOut',
+    })
   }
 
   /** 沿折线滑行（冬季踏冰绕桥）：从当前位置出发，依次经过 points，终点带偏移坐标 */

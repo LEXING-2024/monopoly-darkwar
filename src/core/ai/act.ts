@@ -3,8 +3,8 @@
 // 叠加 M3 修复：走 sellResources API、修桥半价、dam/breakwater/office 建造、威胁排序举报、评分选勘探/升级目标
 
 import {
-  BUILDINGS, BUILDING_DEFS, EAST_BRIDGE, FLOOD_TILES, RESOURCES, RESOURCE_ORDER,
-  SEASONS, TERRAIN_RESOURCE, WEST_BRIDGE,
+  BRIDGES, BRIDGE_PRICING, BUILDINGS, BUILDING_DEFS, EAST_BRIDGE, FLOOD_TILES, MARKET_MANIPULATION,
+  MONOPOLY_WIN, RESOURCES, RESOURCE_ORDER, SEASONS, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from '../config'
 import { canBuild, levelCost, repair, repairCost } from '../buildings'
 import { bridgeRepairCost, exploreCost, tileRent } from '../economy'
@@ -14,7 +14,7 @@ import { brainRng, saveBrainRng } from './personality'
 import { cashSafetyLine, priceForecast, tileValue } from './score'
 import { updateOpponentModels } from './opponent'
 import { rushTarget, updateStrategy } from './strategy'
-import type { AiBrain, GameApi, Terrain, Tile, TradeOffer } from '../types'
+import type { AiBrain, GameApi, ResourceType, Terrain, Tile, TradeOffer } from '../types'
 
 /** 按大脑私有随机源掷概率（无大脑时退回主随机源） */
 function chance(game: GameApi, brain: AiBrain | null, p: number): boolean {
@@ -45,6 +45,11 @@ export async function aiAct(game: GameApi, playerId: number): Promise<void> {
 
   // 1) 市场操作：紧急变现 → 择时抛售/囤积（走 sellResources，批量折价与无人机加成生效）
   planSales(game, playerId)
+
+  // 1.5) 资源市场操纵：垄断者按情境限产抬价 or 价格战打击对手（每回合限1次）
+  planMarketManipulation(game, playerId, brain)
+  // 1.6) 桥梁设卡：桥主按情境提高过路费（对手可绕行，所以要看是否有人常过桥）
+  planBridgePricing(game, playerId, brain)
 
   const myTiles = s.tiles.filter(t => t.owner === playerId)
   const safety = cashSafetyLine(game, playerId)
@@ -231,6 +236,77 @@ function buildTradeProposal(game: GameApi, playerId: number, safety: number): { 
 }
 
 // ---------- 市场操作 ----------
+
+/** 资源市场操纵：垄断者按情境选择限产抬价或价格战。
+ *  - 若某对手大量囤着该资源（卖家常）→ 价格战打击他（会结仇，但进攻性强)
+ *  - 否则 → 限产抬价，借机高价卖出自己的库存
+ * 现金安全优先：留足 safety 后才做；用大脑随机源控制频率，避免每回合都操纵。 */
+function planMarketManipulation(game: GameApi, playerId: number, brain: AiBrain | null): void {
+  const s = game.state
+  const p = s.players[playerId]
+  if (s.ops.market <= 0 || !p.alive) return
+  const safety = cashSafetyLine(game, playerId)
+
+  // 优先级 1：断供——已形成垄断（≥70%）且有人囤着该资源时，封锁销路是纯收益
+  //（对手只能半价卖、自己不受影响），所以不受随机概率限制，条件满足就出手。
+  const monoRes = (Object.keys(RESOURCES) as ResourceType[])
+    .filter(r => game.resourceShare(playerId, r) >= MONOPOLY_WIN.terrainRatio)
+  if (monoRes.length && p.cash >= safety * 2 + MARKET_MANIPULATION.dumpCost) {
+    const withVictim = monoRes.filter(r =>
+      s.players.some(x => x.alive && x.id !== playerId && (x.resources[r] ?? 0) >= 5),
+    )
+    if (withVictim.length) {
+      // 优先断供对手囤得最多的那种资源
+      const res = withVictim.sort((a, b) =>
+        s.players.reduce((n, x) => n + (x.id !== playerId && x.alive ? (x.resources[b] ?? 0) : 0), 0) -
+        s.players.reduce((n, x) => n + (x.id !== playerId && x.alive ? (x.resources[a] ?? 0) : 0), 0),
+      )[0]
+      if (game.blockSupply(res)) return
+    }
+  }
+
+  // 优先级 2：限产抬价 / 价格战（需 50% 份额，受概率控制避免每回合都操纵）
+  const options = game.manipulableResources(playerId)
+  if (!options.length) return
+  if (p.cash < safety * 2 + MARKET_MANIPULATION.warCost) return
+  const aggressive = brain?.strategy === 'attack'
+  if (!chance(game, brain, aggressive ? 0.55 : 0.35)) return
+
+  const res = options.slice().sort((a, b) =>
+    (game.resourceShare(playerId, b) * s.market[b]) - (game.resourceShare(playerId, a) * s.market[a]),
+  )[0]
+  const rivalsStock = s.players
+    .filter(x => x.alive && x.id !== playerId)
+    .reduce((sum, x) => sum + (x.resources[res] ?? 0), 0)
+  const myStock = p.resources[res] ?? 0
+  const useWar = rivalsStock >= 12 && rivalsStock > myStock * 1.5 && p.cash >= safety * 2 + MARKET_MANIPULATION.warCost
+
+  if (useWar) game.manipulateMarket(res, 'war')
+  else if (p.cash >= safety * 2 + MARKET_MANIPULATION.limitCost) game.manipulateMarket(res, 'limit')
+}
+
+/** 桥梁设卡：桥主临时提高过路费。风险是过桥者会绕行（多走 3 步）导致反而收不到钱，
+ *  所以只在"中等收费档位"时提价（收费已很高的桥提价会让绕行更划算），且现金宽裕。 */
+function planBridgePricing(game: GameApi, playerId: number, brain: AiBrain | null): void {
+  const s = game.state
+  const p = s.players[playerId]
+  if (s.ops.bridgePrice <= 0 || !p.alive) return
+  const myBridges = s.tiles.filter(t =>
+    t.type === 'bridge' && t.owner === playerId && t.bridgeLevel >= BRIDGE_PRICING.minLevel && t.bridgeClosed <= 0,
+  )
+  if (!myBridges.length) return
+  const safety = cashSafetyLine(game, playerId)
+  if (p.cash < safety * 2 + BRIDGE_PRICING.cost) return
+  const aggressive = brain?.strategy === 'attack'
+  if (!chance(game, brain, aggressive ? 0.5 : 0.3)) return
+  // 选当前收费最低的那座桥（提价后仍不至于让对手觉得绕行更划算）
+  const target = myBridges.sort((a, b) => {
+    const ca = BRIDGES[a.index as typeof WEST_BRIDGE | typeof EAST_BRIDGE]
+    const cb = BRIDGES[b.index as typeof WEST_BRIDGE | typeof EAST_BRIDGE]
+    return (ca?.tolls[a.bridgeLevel] ?? 0) - (cb?.tolls[b.bridgeLevel] ?? 0)
+  })[0]
+  game.priceBridge(target.index)
+}
 
 function planSales(game: GameApi, playerId: number): void {
   const s = game.state

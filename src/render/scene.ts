@@ -102,6 +102,8 @@ export class BoardScene extends Phaser.Scene {
   private seasonOverlay!: Phaser.GameObjects.Rectangle
   private emitter!: Phaser.GameObjects.Particles.ParticleEmitter
   private dragging = false
+  /** 双指捏合上一帧的间距，用于按相对比例缩放；单指/抬起时清空 */
+  private pinchPrevDist: number | null = null
   /** 受灾地块的视觉标记：灾害发生后保留 2 回合再消失（核心清灾后依然显示） */
   private disasterFx: Map<number, { kind: DisasterKind; untilRound: number }> = new Map()
   /** 踏冰绕行中的玩家：playerId -> 目标格；用于忽略随后到达格的 piece-step，避免瞬移 */
@@ -1417,33 +1419,52 @@ export class BoardScene extends Phaser.Scene {
     let A: { x: number; y: number } | null = null
     let R = 0
     let L = 0
-    let d: { d: number; midX: number; midY: number; zoom: number; sx: number; sy: number } | null = null
-    const x = () => this.input.pointer1.isDown && this.input.pointer2.isDown, t = (a: any, v: any, o: any) => {
-      const r = M.zoom, i = Phaser.Math.Clamp(r * a, this.baseZoom, this.baseZoom * 2.8);
-      if (Math.abs(i - r) < 1e-3) return;
-      const e = M.scrollX + v / r, n = M.scrollY + o / r;
-      M.setZoom(i), M.setScroll(e - v / i, n - o / i);
+    let d: { d: number } | null = null
+    const x = () => this.input.pointer1.isDown && this.input.pointer2.isDown
+    // 以屏幕锚点 (sx,sy) 为中心把相机缩放 factor 倍。
+    // Phaser 相机默认 origin=(0.5,0.5) 围绕视口中心缩放，世界坐标映射为：
+    //   world = scroll + center + (screen - center) / zoom
+    // 要保持锚点不动：newScroll = scroll + (screen - center) * (1/oldZoom - 1/newZoom)
+    // 旧代码用 scroll + screen/zoom，漏掉 center 补偿，锚点被推到右下角（bug 根因）。
+    // 用纯数学公式而非 getWorldPoint：后者依赖 preRender 刷矩阵，同一回调内连调会读到旧矩阵。
+    const t = (factor: number, sx: number, sy: number) => {
+      const old = M.zoom
+      const next = Phaser.Math.Clamp(old * factor, this.baseZoom, this.baseZoom * 2.8)
+      if (Math.abs(next - old) < 1e-4) return
+      const cx = M.width * 0.5, cy = M.height * 0.5
+      const dInv = 1 / old - 1 / next
+      M.setScroll(M.scrollX + (sx - cx) * dInv, M.scrollY + (sy - cy) * dInv)
+      M.setZoom(next)
     };
     this.input.on("wheel", (a: any, v: any, o: any, r: any) => {
-      const i = this.input.activePointer;
-      t(r > 0 ? 0.9 : 1.1, i.x, i.y);
+      // 滚轮固定来自鼠标：用事件自带的 pointer(a) 坐标做锚点。
+      // 不用 this.input.activePointer——activePointers=2 时它可能指向触摸指针，坐标不在鼠标处。
+      // r = deltaY：向下滚(r>0)缩小、向上滚放大。
+      const ptr = this.input.mousePointer ?? a;
+      t(r > 0 ? 0.9 : 1.1, ptr.x, ptr.y);
     }), this.input.on("pointerdown", (a: any) => {
-      this.dragging = false, x() ? (d = { d: Phaser.Math.Distance.Between(this.input.pointer1.x, this.input.pointer1.y, this.input.pointer2.x, this.input.pointer2.y), midX: (this.input.pointer1.x + this.input.pointer2.x) / 2, midY: (this.input.pointer1.y + this.input.pointer2.y) / 2, zoom: M.zoom, sx: M.scrollX, sy: M.scrollY }, A = null) : (A = { x: a.x, y: a.y }, R = M.scrollX, L = M.scrollY);
+      this.dragging = false, x() ? (d = { d: Phaser.Math.Distance.Between(this.input.pointer1.x, this.input.pointer1.y, this.input.pointer2.x, this.input.pointer2.y) }, A = null) : (A = { x: a.x, y: a.y }, R = M.scrollX, L = M.scrollY);
     }), this.input.on("pointermove", (a: any) => {
       if (x()) {
         if (!d) return;
-        const v = Phaser.Math.Distance.Between(this.input.pointer1.x, this.input.pointer1.y, this.input.pointer2.x, this.input.pointer2.y), o = (this.input.pointer1.x + this.input.pointer2.x) / 2, r = (this.input.pointer1.y + this.input.pointer2.y) / 2;
-        if (v < 4) return;
-        const i = Phaser.Math.Clamp(d.zoom * (v / d.d), this.baseZoom, this.baseZoom * 2.8), e = d.sx + d.midX / d.zoom, n = d.sy + d.midY / d.zoom;
-        M.setZoom(i), M.setScroll(e - o / i, n - r / i);
+        const dist = Phaser.Math.Distance.Between(this.input.pointer1.x, this.input.pointer1.y, this.input.pointer2.x, this.input.pointer2.y)
+        if (dist < 4) return;
+        const midX = (this.input.pointer1.x + this.input.pointer2.x) / 2
+        const midY = (this.input.pointer1.y + this.input.pointer2.y) / 2
+        // 双指捏合：相对上一帧的距离比例缩放，锚点取双指中点，同样用 getWorldPoint 补偿
+        const prevDist = this.pinchPrevDist ?? dist
+        t(dist / prevDist, midX, midY)
+        this.pinchPrevDist = dist
         return;
       }
+      this.pinchPrevDist = null
       if (a.isDown && A) {
         const v = a.x - A.x, o = a.y - A.y;
         !this.dragging && Math.hypot(v, o) > 5 && (this.dragging = true), this.dragging && M.setScroll(R - v, L - o);
       }
     }), this.input.on("pointerup", () => {
       d = null;
+      this.pinchPrevDist = null;
       const a = this.input.pointer1.isDown, v = this.input.pointer2.isDown;
       a && !v ? A = { x: this.input.pointer1.x, y: this.input.pointer1.y } : !a && v ? A = { x: this.input.pointer2.x, y: this.input.pointer2.y } : A = null, R = M.scrollX, L = M.scrollY;
     });

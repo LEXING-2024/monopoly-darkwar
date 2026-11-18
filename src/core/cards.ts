@@ -8,7 +8,24 @@ import { addChain, monopolyInfo, specialReport } from './events'
 import { rollReserve, totalValue } from './economy'
 import { applyPriceShock } from './market'
 import { newBuildingId } from './buildings'
-import type { GameApi, ResourceType, Season, Tile } from './types'
+import type { DisasterKind, GameApi, ResourceType, Season, Terrain, Tile } from './types'
+
+/** 可选地形区列表（灾害卡让玩家选目标区域） */
+const TERRAIN_CHOICES: Terrain[] = ['forest', 'plateau', 'desert', 'coast']
+const TERRAIN_LABEL: Record<Terrain, string> = { forest: '森林', plateau: '高原', desert: '沙漠', coast: '沿海' }
+
+/** 给指定地形区里「除抽卡者外的存活对手」地块施加灾害；抽卡者地块免疫。返回受影响地块数 */
+function hitOpponentTerrain(game: GameApi, playerId: number, terrain: Terrain, kind: DisasterKind, turns: number): number {
+  let count = 0
+  for (const t of game.state.tiles) {
+    if (t.type !== 'terrain' || t.terrain !== terrain) continue
+    if (t.owner === null || t.owner === playerId) continue    // 无主地块与抽卡者免疫
+    if (!game.state.players[t.owner]?.alive) continue
+    t.disaster = { kind, turns }
+    count++
+  }
+  return count
+}
 
 export interface CardDef {
   id: string
@@ -17,6 +34,8 @@ export interface CardDef {
   icon: string
   seasons?: Season[]
   cost?: number
+  /** 抽卡阶段的有效性判定：返回 false 的卡本局当前不进入抽取池（避免抽到无效卡再发保底补偿） */
+  available?: (game: GameApi, playerId: number) => boolean
   effect: (game: GameApi, playerId: number) => Promise<void>
 }
 
@@ -24,11 +43,11 @@ const ownerTiles = (game: GameApi, pid: number) => game.state.tiles.filter(t => 
 const terrainTilesOf = (game: GameApi, pid: number, terrain: string) =>
   ownerTiles(game, pid).filter(t => t.type === 'terrain' && t.terrain === terrain)
 
-/** 卡牌金钱与 GDP 挂钩：金额 = 人均 GDP × 比例（人均 GDP 下限 5000，金额下限 100，取整到 10）。
+/** 卡牌金钱与总财富挂钩：金额 = 人均总财富 × 比例（人均下限 5000，金额下限 100，取整到 10）。
  *  奖励与罚款随经济规模浮动——早期少、后期多，避免固定数值在后期无关痛痒。 */
 export function cardMoney(game: GameApi, ratio: number): number {
   const alive = game.state.players.filter(p => p.alive).length || 1
-  const perCapita = Math.max(5000, game.state.gdp / alive)
+  const perCapita = Math.max(5000, game.state.totalWealth / alive)
   return Math.max(100, Math.round((perCapita * ratio) / 10) * 10)
 }
 
@@ -65,30 +84,40 @@ export const FATE_DECK: CardDef[] = [
     },
   },
   {
-    id: 'market-crash', name: '市场崩盘', icon: '📉',
-    desc: '所有资源价格 -30%，持续 2 回合。',
-    effect: async (game) => {
-      const s = game.state
-      for (const r of Object.keys(RESOURCES) as ResourceType[]) {
-        s.priceMods.push({ resource: r, factor: 0.7, turns: 2, label: '市场崩盘' })
-        applyPriceShock(game, r, 0.7)   // 立即下跌 30%，而不是只改夹逼下界
+    id: 'market-crash', name: '行业崩盘', icon: '📉',
+    desc: '选一种资源，所有对手的该资源产出减半 2 回合，你自己不受影响。',
+    effect: async (game, pid) => {
+      const res = await game.prompt<ResourceType>({
+        type: 'choose-resource', title: '行业崩盘',
+        desc: '选择要打击的资源（所有对手该资源产出减半 2 回合，你免疫）',
+        options: Object.keys(RESOURCES) as ResourceType[], player: pid, cardId: 'market-crash',
+      })
+      // 产出修正是按玩家存的：只给对手加，抽卡者不加入 → 天然免疫
+      let hit = 0
+      for (const p of game.state.players) {
+        if (!p.alive || p.id === pid) continue
+        p.status.outputMods.push({ factor: 0.5, turns: 2, label: `行业崩盘·${RESOURCES[res].name}` })
+        hit++
       }
-      game.log('市场崩盘！所有资源价格 -30%（2 回合）')
+      game.log(`行业崩盘！${RESOURCES[res].name}产出对 ${hit} 名对手减半（2 回合），你独善其身`, pid)
     },
   },
   {
     id: 'subsidy', name: '政府补贴', icon: '💰',
-    desc: '获得人均 GDP 的 3%（随经济规模浮动）。',
+    desc: '获得人均总财富 的 3%（随经济规模浮动）。',
     effect: async (game, pid) => { game.gain(pid, cardMoney(game, 0.03), '政府补贴') },
   },
   {
     id: 'blizzard', name: '暴风雪来袭', icon: '❄️', seasons: ['winter'],
-    desc: '高原区所有玩家当回合收益归零。',
-    effect: async (game) => {
-      for (const t of game.state.tiles) {
-        if (t.terrain === 'plateau' && t.owner !== null) t.disaster = { kind: 'snow', turns: 1 }
-      }
-      game.log('暴风雪席卷高原，放牧收益本回合归零！')
+    desc: '选一片地形区，该区所有对手当回合收益归零，你在该区的地块免疫。',
+    effect: async (game, pid) => {
+      const terrain = await game.prompt<Terrain>({
+        type: 'choose-terrain', title: '暴风雪来袭',
+        desc: '选择暴风雪席卷的地形区（该区对手收益归零 1 回合，你的地块免疫）',
+        options: TERRAIN_CHOICES, player: pid, cardId: 'blizzard',
+      })
+      const hit = hitOpponentTerrain(game, pid, terrain, 'snow', 1)
+      game.log(`暴风雪席卷${TERRAIN_LABEL[terrain]}区，${hit} 块对手地块收益归零（你免疫）！`, pid)
     },
   },
   {
@@ -120,31 +149,32 @@ export const FATE_DECK: CardDef[] = [
   },
   {
     id: 'bridge-upgrade', name: '桥梁维护完成', icon: '🌉',
-    desc: '你拥有的一座桥免费升级一级。',
+    desc: '你拥有的一座桥免费升级一级（无可升级的桥时此卡不会抽到）。',
+    available: (game, pid) => ownerTiles(game, pid).some(t => t.type === 'bridge' && t.bridgeLevel < 3),
     effect: async (game, pid) => {
       const bridges = ownerTiles(game, pid).filter(t => t.type === 'bridge' && t.bridgeLevel < 3)
-      if (bridges.length) {
-        const b = game.rng.pick(bridges)
-        b.bridgeLevel = (b.bridgeLevel + 1) as 1 | 2 | 3
-        game.log(`「${b.name}」维护完成，升级为 ${b.bridgeLevel} 级！`, pid)
-      } else {
-        game.gain(pid, cardMoney(game, 0.02), '桥梁维护补贴')
-      }
+      if (!bridges.length) return   // 兜底：available 过滤后理论上不会到这里
+      const b = game.rng.pick(bridges)
+      b.bridgeLevel = (b.bridgeLevel + 1) as 1 | 2 | 3
+      game.log(`「${b.name}」维护完成，升级为 ${b.bridgeLevel} 级！`, pid)
     },
   },
   {
     id: 'sandstorm-alert', name: '沙尘暴警报', icon: '🌪️',
-    desc: '沙漠区玩家下回合收益减半。',
-    effect: async (game) => {
-      for (const t of game.state.tiles) {
-        if (t.terrain === 'desert' && t.owner !== null) t.disaster = { kind: 'sandstorm', turns: 1 }
-      }
-      game.log('沙尘暴警报！沙漠区收益减半')
+    desc: '选一片地形区，该区所有对手收益减半，你在该区的地块免疫。',
+    effect: async (game, pid) => {
+      const terrain = await game.prompt<Terrain>({
+        type: 'choose-terrain', title: '沙尘暴警报',
+        desc: '选择沙尘暴横扫的地形区（该区对手收益减半 1 回合，你的地块免疫）',
+        options: TERRAIN_CHOICES, player: pid, cardId: 'sandstorm-alert',
+      })
+      const hit = hitOpponentTerrain(game, pid, terrain, 'sandstorm', 1)
+      game.log(`沙尘暴横扫${TERRAIN_LABEL[terrain]}区，${hit} 块对手地块收益减半（你免疫）`, pid)
     },
   },
   {
     id: 'charity', name: '慈善捐赠', icon: '🎗️',
-    desc: '捐出人均 GDP 的 1.5%，下回合免交过路费。',
+    desc: '捐出人均总财富 的 1.5%，下回合免交过路费。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.015), null, '慈善捐赠')
       if (game.state.players[pid].alive) {
@@ -171,12 +201,12 @@ export const FATE_DECK: CardDef[] = [
   },
   {
     id: 'wallet', name: '捡到钱包', icon: '👛',
-    desc: '获得人均 GDP 的 1.5%（随经济规模浮动）。',
+    desc: '获得人均总财富 的 1.5%（随经济规模浮动）。',
     effect: async (game, pid) => { game.gain(pid, cardMoney(game, 0.015), '捡到钱包') },
   },
   {
     id: 'tax-audit', name: '突击查税', icon: '🧾',
-    desc: '二选一：缴纳人均 GDP 的 2% 税款，或失去你价值最低的一块地块。',
+    desc: '二选一：缴纳人均总财富 的 2% 税款，或失去你价值最低的一块地块。',
     effect: async (game, pid) => {
       const s = game.state
       const tax = cardMoney(game, 0.02)
@@ -239,7 +269,7 @@ export const FATE_DECK: CardDef[] = [
   },
   {
     id: 'festival', name: '节日庆典', icon: '🎉',
-    desc: '你获得人均 GDP 的 2% 节日礼金，并免除一次过路费。',
+    desc: '你获得人均总财富 的 2% 节日礼金，并免除一次过路费。',
     effect: async (game, pid) => {
       game.gain(pid, cardMoney(game, 0.02), '节日庆典')
       game.state.players[pid].status.rentFree = Math.max(game.state.players[pid].status.rentFree, 2)
@@ -247,22 +277,16 @@ export const FATE_DECK: CardDef[] = [
   },
   {
     id: 'typhoon-alert', name: '台风警报', icon: '🌀', seasons: ['summer', 'autumn'],
-    desc: '东南近海生成一股台风（1 级），将在海上逐步增强。',
-    effect: async (game, pid) => {
+    desc: '东南近海生成一股台风（1 级），将在海上逐步增强（保护期内或已有台风时此卡不会抽到）。',
+    // 保护期内不生成台风、场上已有台风时也不再生成 → 这两种情况不进抽取池
+    available: (game) => !game.state.typhoon && game.state.totalRound > SAFE_TURNS,
+    effect: async (game) => {
       const s = game.state
-      if (!s.typhoon) {
-        // 灾害保护期（前 10 回合）不生成台风，改为误报补偿
-        if (game.state.totalRound <= SAFE_TURNS) {
-          game.gain(pid, cardMoney(game, 0.01), '警报误报补偿')
-          return
-        }
-        s.typhoon = makeTyphoonState(game, 1)
-        game.log('台风警报：东南近海生成台风（1 级），将在海上逐步增强！')
-        game.sfx('thunder')
-        game.emit('typhoon', s.typhoon)
-      } else {
-        game.gain(pid, cardMoney(game, 0.01), '警报误报补偿')
-      }
+      if (s.typhoon) return   // 兜底：available 过滤后理论上不会到这里
+      s.typhoon = makeTyphoonState(game, 1)
+      game.log('台风警报：东南近海生成台风（1 级），将在海上逐步增强！')
+      game.sfx('thunder')
+      game.emit('typhoon', s.typhoon)
     },
   },
   {
@@ -286,11 +310,12 @@ export const FATE_DECK: CardDef[] = [
   },
   {
     id: 'bank-rate', name: '银行加息', icon: '🏦',
-    desc: '所有玩家向银行缴纳人均 GDP 的 0.5%。',
-    effect: async (game) => {
+    desc: '所有对手向银行缴纳人均总财富 的 0.5%，你免交。',
+    effect: async (game, pid) => {
       for (const p of [...game.state.players]) {
-        if (p.alive) await game.pay(p.id, cardMoney(game, 0.005), null, '银行加息')
+        if (p.alive && p.id !== pid) await game.pay(p.id, cardMoney(game, 0.005), null, '银行加息')
       }
+      game.log('银行加息！所有对手缴纳利息，你独善其身', pid)
     },
   },
   {
@@ -338,7 +363,7 @@ export const FATE_DECK: CardDef[] = [
   },
   {
     id: 'rain', name: '天降甘霖', icon: '🌧️',
-    desc: '清除你所有地块上的灾害，并获得人均 GDP 的 2%。',
+    desc: '清除你所有地块上的灾害，并获得人均总财富 的 2%。',
     effect: async (game, pid) => {
       for (const t of ownerTiles(game, pid)) t.disaster = null
       game.gain(pid, cardMoney(game, 0.02), '天降甘霖')
@@ -351,7 +376,7 @@ export const FATE_DECK: CardDef[] = [
 export const CHANCE_DECK: CardDef[] = [
   {
     id: 'invest-oilfield', name: '投资油田', icon: '🛢️', cost: 300,
-    desc: '支付人均 GDP 的 1.5%，立即获得一块未拥有的沙漠地块（若有）。',
+    desc: '支付人均总财富 的 1.5%，立即获得一块未拥有的沙漠地块（若有）。',
     effect: async (game, pid) => {
       const free = game.state.tiles.filter(t => t.type === 'terrain' && t.terrain === 'desert' && t.owner === null && !t.seized)
       if (!free.length) { game.log('没有无主的沙漠地块了') ; return }
@@ -364,7 +389,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'bridge-share', name: '收购桥梁股份', icon: '🌉', cost: 500,
-    desc: '支付人均 GDP 的 2.5%，某座桥的过路费收入你分得 30%，持续 3 回合。',
+    desc: '支付人均总财富 的 2.5%，某座桥的过路费收入你分得 30%，持续 3 回合。',
     effect: async (game, pid) => {
       const bridges = [WEST_BRIDGE, EAST_BRIDGE].filter(i => game.state.tiles[i].owner !== null && game.state.tiles[i].owner !== pid)
       if (!bridges.length) { game.log('没有可收购股份的桥梁'); return }
@@ -378,7 +403,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'temp-dock', name: '修建临时码头', icon: '⛵', cost: 200,
-    desc: '支付人均 GDP 的 1%，下次过河免过路费。',
+    desc: '支付人均总财富 的 1%，下次过河免过路费。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.01), null, '临时码头')
       if (game.state.players[pid].alive) {
@@ -409,7 +434,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'geologist-hire', name: '聘请地质学家', icon: '🧑‍🔬', cost: 300,
-    desc: '支付人均 GDP 的 1.5%，揭示一块沙漠地块的储量和类型。',
+    desc: '支付人均总财富 的 1.5%，揭示一块沙漠地块的储量和类型。',
     effect: async (game, pid) => {
       const unk = terrainTilesOf(game, pid, 'desert').filter(t => !t.explored)
       if (!unk.length) { game.log('没有待勘探的沙漠地块'); return }
@@ -428,7 +453,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'bribe', name: '买通官员', icon: '💼', cost: 400,
-    desc: '支付人均 GDP 的 2%，临时大幅降低你被举报的成功率。',
+    desc: '支付人均总财富 的 2%，临时大幅降低你被举报的成功率。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.02), null, '买通官员')
       if (game.state.players[pid].alive) {
@@ -439,7 +464,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'market-fair', name: '开办集市', icon: '🏪', cost: 200,
-    desc: '支付人均 GDP 的 1%，你收取的租金 +50%，持续到你的下回合结束。',
+    desc: '支付人均总财富 的 1%，你收取的租金 +50%，持续到你的下回合结束。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.01), null, '开办集市')
       if (game.state.players[pid].alive) {
@@ -451,7 +476,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'temp-dam', name: '建造临时堤坝', icon: '🏗️', cost: 300,
-    desc: '支付人均 GDP 的 1.5%，接下来 3 轮你的桥梁两侧地块不受洪水影响。',
+    desc: '支付人均总财富 的 1.5%，接下来 3 轮你的桥梁两侧地块不受洪水影响。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.015), null, '临时堤坝')
       if (game.state.players[pid].alive) {
@@ -461,7 +486,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'auction-commission', name: '拍卖行委托', icon: '🔨', cost: 100,
-    desc: '支付人均 GDP 的 0.5%，选择一块无主地块进入拍卖（底价半价）。',
+    desc: '支付人均总财富 的 0.5%，选择一块无主地块进入拍卖（底价半价）。',
     effect: async (game, pid) => {
       const free = game.state.tiles.filter(t => (t.type === 'terrain' || t.type === 'bridge') && t.owner === null && !t.seized)
       if (!free.length) { game.log('没有无主地块'); return }
@@ -478,7 +503,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'insurance', name: '购买保险', icon: '🛡️', cost: 200,
-    desc: '支付人均 GDP 的 1%，接下来 2 轮你的地块受灾害时，损失由银行承担。',
+    desc: '支付人均总财富 的 1%，接下来 2 轮你的地块受灾害时，损失由银行承担。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.01), null, '购买保险')
       if (game.state.players[pid].alive) {
@@ -488,7 +513,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'tech-invest', name: '投资科技', icon: '🤖', cost: 500,
-    desc: '支付人均 GDP 的 2.5%，获得一个随机科技建筑图纸（免费建造）。',
+    desc: '支付人均总财富 的 2.5%，获得一个随机科技建筑图纸（免费建造）。',
     effect: async (game, pid) => {
       const myTiles = ownerTiles(game, pid).filter(t => t.type === 'terrain' && t.buildings.length < 2)
       if (!myTiles.length) { game.log('没有可建造的地块'); return }
@@ -537,7 +562,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'water-invest', name: '投资水利', icon: '💧', cost: 300,
-    desc: '支付人均 GDP 的 1.5%，你收取的租金 +30%，持续 3 回合。',
+    desc: '支付人均总财富 的 1.5%，你收取的租金 +30%，持续 3 回合。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.015), null, '投资水利')
       if (game.state.players[pid].alive) {
@@ -548,7 +573,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'land-deal', name: '收购地皮', icon: '🏞️', cost: 800,
-    desc: '支付人均 GDP 的 4%，获得一块你选择的未拥有地块。',
+    desc: '支付人均总财富 的 4%，获得一块你选择的未拥有地块。',
     effect: async (game, pid) => {
       const free = game.state.tiles.filter(t => t.type === 'terrain' && t.owner === null && !t.seized)
       if (!free.length) { game.log('没有无主地块'); return }
@@ -584,7 +609,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'energy-saving', name: '节能改造', icon: '💡', cost: 200,
-    desc: '支付人均 GDP 的 1%，资源产出 +20%，持续 3 回合。',
+    desc: '支付人均总财富 的 1%，资源产出 +20%，持续 3 回合。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.01), null, '节能改造')
       if (game.state.players[pid].alive) {
@@ -594,7 +619,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'hire-workers', name: '雇佣劳工', icon: '👷', cost: 150,
-    desc: '支付人均 GDP 的 0.8%，资源产出 +30%，持续 2 回合。',
+    desc: '支付人均总财富 的 0.8%，资源产出 +30%，持续 2 回合。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.008), null, '雇佣劳工')
       if (game.state.players[pid].alive) {
@@ -604,7 +629,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'informant', name: '情报贩子', icon: '🕵️', cost: 150,
-    desc: '支付人均 GDP 的 0.8%，免费勘探你所有未勘探地块。',
+    desc: '支付人均总财富 的 0.8%，免费勘探你所有未勘探地块。',
     effect: async (game, pid) => {
       const unk = ownerTiles(game, pid).filter(t => t.type === 'terrain' && !t.explored)
       if (!unk.length) { game.log('没有待勘探地块'); return }
@@ -619,7 +644,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'bodyguard', name: '保镖护送', icon: '💂', cost: 300,
-    desc: '支付人均 GDP 的 1.5%，被举报成功率 -20%，持续 3 轮。',
+    desc: '支付人均总财富 的 1.5%，被举报成功率 -20%，持续 3 轮。',
     effect: async (game, pid) => {
       await game.pay(pid, cardMoney(game, 0.015), null, '保镖护送')
       if (game.state.players[pid].alive) {
@@ -631,7 +656,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'repair-crew', name: '维修队', icon: '🔧', cost: 250,
-    desc: '支付人均 GDP 的 1.2%，免费修理你的一座受损建筑。',
+    desc: '支付人均总财富 的 1.2%，免费修理你的一座受损建筑。',
     effect: async (game, pid) => {
       // 只修复「受损待修」建筑（damaged），不能把完好低级建筑当成修理目标白升一级
       const hasTarget = ownerTiles(game, pid).some(t => t.buildings.some(b => b.damaged))
@@ -649,7 +674,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'sabotage', name: '破坏建筑', icon: '💣', cost: 400,
-    desc: '支付人均 GDP 的 2%，指定对手的一座建筑降 1 级（1 级建筑受损停摆）。',
+    desc: '支付人均总财富 的 2%，指定对手的一座建筑降 1 级（1 级建筑受损停摆）。',
     effect: async (game, pid) => {
       const s = game.state
       await game.pay(pid, cardMoney(game, 0.02), null, '破坏建筑')
@@ -695,7 +720,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'steal-resources', name: '偷取资源', icon: '🎭', cost: 300,
-    desc: '支付人均 GDP 的 1.5%，随机获得对手某种资源的 30%。',
+    desc: '支付人均总财富 的 1.5%，随机获得对手某种资源的 30%。',
     effect: async (game, pid) => {
       const s = game.state
       await game.pay(pid, cardMoney(game, 0.015), null, '偷取资源')
@@ -717,7 +742,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'roadblock', name: '放置路障', icon: '🚧', cost: 300,
-    desc: '支付人均 GDP 的 1.5%，在任意格子放置路障，下一个经过的玩家被拦住停住（路障消失）。',
+    desc: '支付人均总财富 的 1.5%，在任意格子放置路障，下一个经过的玩家被拦住停住（路障消失）。',
     effect: async (game, pid) => {
       const s = game.state
       if (s.roadblock !== null) { game.log('场上已有路障，无法再放置', pid); return }
@@ -743,7 +768,7 @@ export const CHANCE_DECK: CardDef[] = [
   },
   {
     id: 'incite-defection', name: '策反地块', icon: '🕊️', cost: 600,
-    desc: '支付人均 GDP 的 3%，迫使对手与你交换一块同地形地块（建筑随地块移交）。',
+    desc: '支付人均总财富 的 3%，迫使对手与你交换一块同地形地块（建筑随地块移交）。',
     effect: async (game, pid) => {
       const s = game.state
       await game.pay(pid, cardMoney(game, 0.03), null, '策反地块')

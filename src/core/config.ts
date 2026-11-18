@@ -14,7 +14,7 @@ export const SAFE_TURNS = 10
  *  人类与 AI 同数：建造 ≤1、升级 ≤1、修理 ≤1、勘探 ≤1、修桥 ≤1。
  *  扣减位置统一：人类 UI 与 AI（act.ts）都走 game.buildAt/upgradeAt/repairAt/exploreAt/repairBridge，配额随当前玩家各自独立，互不共享。
  *  例外：停在起点的「8 折全修」是落脚事件，不占配额 */
-export const TURN_OP_LIMITS = { build: 1, upgrade: 1, repair: 1, explore: 1, bridge: 1 } as const
+export const TURN_OP_LIMITS = { build: 1, upgrade: 1, repair: 1, explore: 1, bridge: 1, market: 1, bridgePrice: 1 } as const
 /** 开局租金缓启动：前 N 轮租金从 60% 线性恢复到 100%（保护早期现金流，不增加购买力） */
 export const RENT_RAMP_ROUNDS = 20
 export const RENT_RAMP_MIN = 0.6
@@ -192,6 +192,16 @@ export const BRIDGES = {
 /** 修桥费用折扣：修桥 = 该级升级成本 × 此系数（核心/AI/UI 共用同一口径，见 economy.bridgeRepairCost） */
 export const BRIDGE_REPAIR_DISCOUNT = 0.5
 
+/** 桥梁定价权（交通咽喉垄断）：桥主可临时提高自己那座桥的过路费，全桌过桥者都要多交。
+ *  反制手段：① 四季可选"绕行"（多走 3 步免过路费）② 垄断举报 ③ 抢桥。
+ *  每回合限 1 次，且桥需已升级（空桥 0 级收费为 0，提价无意义）。 */
+export const BRIDGE_PRICING = {
+  factor: 1.5,      // 过路费 ×1.5
+  duration: 2,      // 持续 2 轮
+  cost: 500,        // 提价成本（打点/设卡）
+  minLevel: 1,      // 桥至少 1 级（有基础收费）才能提价
+} as const
+
 // 桥梁两侧地块（洪水只影响桥头两岸，文档 7.3）
 export const FLOOD_TILES: number[] = [17, 19, 52, 54]
 
@@ -204,12 +214,12 @@ export const PRICE_CLAMP_MAX = 2.2
 export const BULK_SALE_THRESHOLD = 20  // 单笔 ≥20 单位当笔 -5%（简化供需）
 export const BULK_SALE_DISCOUNT = 0.95
 
-// ---------- 景气循环（GDP 驱动，每轮末评估；危机持续 5 轮） ----------
+// ---------- 景气循环（总财富驱动，每轮末评估；危机持续 5 轮） ----------
 export const CLIMATE = {
-  boomDelta: 0.05,           // 轮 GDP 增幅 ≥ +5% → 繁荣
-  recessionDelta: -0.03,     // 轮 GDP 跌幅 ≤ -3% → 衰退
+  boomDelta: 0.05,           // 轮总财富增幅 ≥ +5% → 繁荣
+  recessionDelta: -0.03,     // 轮总财富跌幅 ≤ -3% → 衰退
   crisisStreak: 2,           // 连续 2 轮衰退 → 危机
-  crisisTurns: 5,            // 危机持续轮数（期间锁定，解除后按 GDP 重评）
+  crisisTurns: 5,            // 危机持续轮数（期间锁定，解除后按总财富重评）
   crisisDisasterProb: 0.05,  // 危机期间灾害概率 +5%
   crisisBridgeToll: 0.8,     // 危机期间过路费 ×0.8
 } as const
@@ -346,7 +356,10 @@ export const ANTITRUST = {
   fineRatio: 0.15,          // 罚款 = 垄断地块总值的 15%
   bountyRatio: 0.25,        // 举报人分享罚款的 25%（2026-08 提高博弈机制经济权重）
   cooldownRounds: 2,        // 举报失败后同一目标 2 轮内不可再被举报
-  outcomes: ['fine', 'auction', 'output'] as const,
+  outcomes: ['fine', 'auction', 'output', 'breakup'] as const,
+  /** 强制拆分（结构性救济）：从垄断者最长的连片段中抽走中点地块，
+   *  半价转给最弱的存活对手——直接摧毁其连片加成，比罚款更"对症"。 */
+  breakupTransferRatio: 0.5,   // 转让作价 = 地价 × 50%
 }
 
 // ---------- 终局（文档 2.3） ----------
@@ -355,6 +368,49 @@ export const ENDGAME = {
   crisisTurns: 5,
   crisisRatio: 0.3,
 }
+
+/** 资源市场操纵：垄断某资源地形达门槛后，可在行动阶段主动操纵该资源市价（影响全桌）。
+ *  限产抬价利好所有持有该资源的人、抬高建厂成本；价格战精准打击对手但会结仇。每回合限 1 次。 */
+export const MARKET_MANIPULATION = {
+  minShare: 0.5,          // 触发门槛：持有某资源地形 ≥50%
+  limitCost: 400,         // 限产成本
+  limitFactor: 1.25,      // 限产：该资源市价 +25%（全桌）
+  warCost: 600,           // 价格战成本
+  warFactor: 0.7,         // 价格战：该资源市价 -30%（全桌）
+  duration: 1,            // 效果持续轮数
+  /** 断供（精准打击）：垄断者封锁该资源销路，其他人卖出只能拿到半价，自己不受影响。
+   *  用来掐断对手现金流——逼其低价变现、资金链断裂，最终破产出局。 */
+  dumpCost: 800,          // 断供成本
+  dumpFactor: 0.5,        // 他人卖价 ×0.5
+  dumpTurns: 2,           // 断供持续轮数（放血要持续才疼）
+} as const
+
+/** 行业龙头（产业链垄断）：某类生产建筑（伐木场/牧场/油井/渔港）数量最多的玩家
+ *  即该资源的"行业龙头"，卖该资源时享有溢价——与"地块份额"不同维度：
+ *  份额靠买地，龙头靠建厂。 */
+export const INDUSTRY_LEADER = {
+  sellBonus: 1.1,      // 龙头卖该资源 +10%
+  minBuildings: 2,     // 至少拥有 2 座同类生产建筑才算龙头（避免一座就称王）
+} as const
+
+/** 连片地块（整片开发）：同地形区内连续相邻的地块达到一定长度，该段租金加成。
+ *  现实对应：整片开发、商圈效应、地块整合溢价。
+ *  博弈点：对手可买断你连片中间的一块"截胡"，让整段加成失效。 */
+export const CONTIGUOUS_BONUS = {
+  /** 连续段长度 → 租金加成（取满足的最高档；5 块及以上封顶） */
+  tiers: [
+    { run: 5, bonus: 0.5 },
+    { run: 4, bonus: 0.4 },
+    { run: 3, bonus: 0.25 },
+  ] as { run: number; bonus: number }[],
+} as const
+
+/** 垄断线（非胜利条件）：某玩家对某类地形的占比达到此值即"形成垄断"。
+ *  垄断不直接获胜，而是解锁压制全桌的手段（限产/价格战/断供），
+ *  同时招致反垄断举报——胜负仍靠淘汰对手。 */
+export const MONOPOLY_WIN = {
+  terrainRatio: 0.7,   // 形成垄断的份额门槛（与举报线一致：一垄断就可被举报）
+} as const
 
 // ---------- 卡牌（文档 5.2/5.3，季节加权） ----------
 export const SEASON_CARD_WEIGHT = 2   // 对应季节标签权重 ×2

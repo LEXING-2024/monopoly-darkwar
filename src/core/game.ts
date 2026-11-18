@@ -1,17 +1,18 @@
 // ============ 游戏核心：回合状态机与全部 API（纯 TS，无 DOM 依赖） ============
 
 import {
-  CLIMATE, CLIMATE_MODS, CLIMATE_NAMES, EAST_BRIDGE, INITIAL_CASH, LOG_CAP, MAX_TURNS,
-  PLAYER_COLORS, PLAYER_SHAPES, RESOURCES, SEASON_CARD_WEIGHT, SEASON_LEN_MAX,
+  BRIDGES, BRIDGE_PRICING, CLIMATE, CLIMATE_MODS, CLIMATE_NAMES, EAST_BRIDGE, INITIAL_CASH, LOG_CAP,
+  MARKET_MANIPULATION, MAX_TURNS, MONOPOLY_WIN,
+  PLAYER_COLORS, PLAYER_SHAPES, RESOURCES, SEASON_CARD_WEIGHT, SEASON_LEN_MAX, TERRAIN_RESOURCE,
   SEASON_LEN_MIN, SEASON_ORDER, SEASONS, START_BONUS, START_REPAIR_DISCOUNT,
   TILE_COUNT, TURN_OP_LIMITS, WEST_BRIDGE,
 } from './config'
 import { CHANCE_DECK, FATE_DECK, type CardDef } from './cards'
 import { RNG } from './rng'
 import { createTiles, LAYOUT, SEA_POINTS, nearestCoast } from './map'
-import { updateMarket, sellUnitPrice, settleMarketPressure, recordSale } from './market'
+import { updateMarket, sellUnitPrice, settleMarketPressure, recordSale, applyPriceShock } from './market'
 import {
-  bridgeRepairCost, bridgeToll, collectOutput, gdpValue, tileRent, totalValue,
+  bridgeRepairCost, bridgeToll, collectOutput, tileRent, totalValue, totalWealthValue,
 } from './economy'
 import { updateDisasters } from './disasters'
 import {
@@ -19,12 +20,13 @@ import {
   tickChains,
 } from './events'
 import { build, explore, repair, repairCost, upgrade } from './buildings'
-import { checkCrisis, checkMonopolyVictory, declareBankruptcy, forceLiquidate } from './bankruptcy'
+import { checkCrisis, declareBankruptcy, forceLiquidate, updateMonopolyStatus } from './bankruptcy'
 import { aiAct, aiRespond } from './ai'
 import type {
   AiDifficulty, CasinoBet, GameApi, GameState, Player, PlayerShape, Prompt, ResourceType, SfxName, Tile, TradeOffer, TyphoonState,
 } from './types'
 import { createBrains } from './ai/brain'
+import { remember } from './ai/memory'
 
 export interface PlayerSetup {
   name: string
@@ -199,7 +201,7 @@ export class Game implements GameApi {
 
   // ---------- 卡牌 ----------
 
-  private drawCard(cat: 'fate' | 'chance'): CardDef {
+  private drawCard(cat: 'fate' | 'chance', playerId: number): CardDef {
     const s = this.state
     let deck = cat === 'fate' ? this.fateDeck : this.chanceDeck
     if (deck.length === 0) {
@@ -208,16 +210,22 @@ export class Game implements GameApi {
       if (cat === 'fate') this.fateDeck = deck
       else this.chanceDeck = deck
     }
+    // 过滤当前无效的卡（如无桥可升级、保护期内台风警报）：不进入本次抽取池
+    const eligible = deck.map((c, i) => ({ c, i }))
+      .filter(({ c }) => !c.available || c.available(this, playerId))
+    // 兜底：若整副牌都不可用（极端情况），退回全牌堆抽取，避免死循环
+    const pool = eligible.length ? eligible : deck.map((c, i) => ({ c, i }))
     // 季节加权（文档 5.4）
-    const weights = deck.map(c => (c.seasons?.includes(s.season) ? SEASON_CARD_WEIGHT : 1))
-    const idx = this.rng.weighted(weights)
-    const card = deck.splice(idx, 1)[0]
+    const weights = pool.map(({ c }) => (c.seasons?.includes(s.season) ? SEASON_CARD_WEIGHT : 1))
+    const pick = pool[this.rng.weighted(weights)]
+    // 从牌堆移除抽中的那张（按原索引，因为过滤可能跳过若干张）
+    deck.splice(pick.i, 1)
     s.deckLeft[cat] = deck.length
-    return card
+    return pick.c
   }
 
   async drawFate(playerId: number): Promise<void> {
-    const card = this.drawCard('fate')
+    const card = this.drawCard('fate', playerId)
     const p = this.state.players[playerId]
     this.log(`「${p.name}」抽到命运卡：${card.name}`, playerId)
     this.sfx('card')
@@ -227,13 +235,12 @@ export class Game implements GameApi {
       canDecline: false, player: playerId,
     })
     await card.effect(this, playerId)
-    // 卡牌可能改变地块归属（收购/策反/征用等），需立即检查垄断胜利
-    checkMonopolyVictory(this)
+    // 垄断胜利改为轮末统一判定（需连续维持若干轮），此处不再即时检查
     this.markChanged()
   }
 
   async drawChance(playerId: number, forced = false): Promise<void> {
-    const card = this.drawCard('chance')
+    const card = this.drawCard('chance', playerId)
     const p = this.state.players[playerId]
     this.log(`「${p.name}」抽到机会卡：${card.name}`, playerId)
     this.sfx('card')
@@ -255,8 +262,7 @@ export class Game implements GameApi {
       })
     }
     await card.effect(this, playerId)
-    // 卡牌可能改变地块归属（收购/策反/征用等），需立即检查垄断胜利
-    checkMonopolyVictory(this)
+    // 垄断胜利改为轮末统一判定，此处不再即时检查
     this.markChanged()
   }
 
@@ -318,8 +324,6 @@ export class Game implements GameApi {
     this.sfx('gavel')
     this.sfx('coin')
     this.markChanged()
-    checkMonopolyVictory(this)
-    if (this.state.winner !== null) this.endAction()
     return leader
   }
 
@@ -344,9 +348,6 @@ export class Game implements GameApi {
     this.emit('float', { tile: tile.index, text: `-${tile.price}`, color: '#7fe07a' })
     this.sfx('coin')
     this.markChanged()
-    checkMonopolyVictory(this)
-    // 胜利发生在行动阶段：立刻结束本回合，避免人类还要手动点“结束回合”
-    if (this.state.winner !== null) this.endAction()
   }
 
   buildAt(tileIndex: number, defId: string): boolean {
@@ -416,7 +417,10 @@ export class Game implements GameApi {
     const p = s.players[s.currentPlayer]
     units = Math.floor(units)
     if (units <= 0 || p.resources[res] < units) return false
-    const price = sellUnitPrice(this, p.id, res, units)
+    let price = sellUnitPrice(this, p.id, res, units)
+    // 断供：被他人封锁销路时只能半价卖出（垄断者自己不受影响）——掐断对手现金流
+    const blockedBy = s.supplyBlocks.find(b => b.resource === res && b.turns > 0 && b.playerId !== p.id)
+    if (blockedBy) price *= MARKET_MANIPULATION.dumpFactor
     const income = Math.round(units * price)
     p.resources[res] -= units
     p.cash += income
@@ -424,8 +428,130 @@ export class Game implements GameApi {
     p.stats.resourceIncome += income   // 金钱流向观测
     // 所有玩家的大额抛售都计入供给压力：人类玩家不再能无限量、无成本地砸盘
     recordSale(this, res, units)
-    this.log(`「${p.name}」卖出 ${units} 单位${RESOURCES[res].name}（+${income}）`, p.id)
+    if (blockedBy) {
+      this.log(`「${p.name}」被「${s.players[blockedBy.playerId].name}」断供，${RESOURCES[res].name}只能半价卖出（+${income}）`, p.id)
+    } else {
+      this.log(`「${p.name}」卖出 ${units} 单位${RESOURCES[res].name}（+${income}）`, p.id)
+    }
     this.sfx('coin')
+    this.markChanged()
+    return true
+  }
+
+  /** 某玩家对某资源的地形份额（持有的该地形地块数 ÷ 该地形总地块数） */
+  resourceShare(playerId: number, res: ResourceType): number {
+    const s = this.state
+    const terrain = RESOURCES[res].terrain
+    let total = 0, owned = 0
+    for (const t of s.tiles) {
+      if (t.type !== 'terrain' || t.terrain === 'none') continue
+      if (t.terrain !== terrain) continue
+      total++
+      if (t.owner === playerId) owned++
+    }
+    return total > 0 ? owned / total : 0
+  }
+
+  /** 该玩家当前可操纵的资源列表（份额达门槛） */
+  manipulableResources(playerId: number): ResourceType[] {
+    return (Object.keys(RESOURCES) as ResourceType[])
+      .filter(r => this.resourceShare(playerId, r) >= MARKET_MANIPULATION.minShare)
+  }
+
+  /**
+   * 资源市场操纵：垄断者主动操纵某资源市价，影响全桌（价格 writing 进 priceMods）。
+   * - 'limit' 限产抬价：市价 +25%，利好所有持该资源者、抬高以该资源为投入的环节
+   * - 'war'   价格战：市价 -30%，打击靠卖该资源获利的对手（双刃剑，自己也少赚）
+   * 每回合限 1 次（ops.market），需付成本。价格战会记仇。
+   */
+  manipulateMarket(res: ResourceType, kind: 'limit' | 'war'): boolean {
+    const s = this.state
+    const p = s.players[s.currentPlayer]
+    if (!p?.alive || s.phase !== 'action') return false
+    if (s.ops.market <= 0) return false
+    if (this.resourceShare(p.id, res) < MARKET_MANIPULATION.minShare) return false
+    const cost = kind === 'limit' ? MARKET_MANIPULATION.limitCost : MARKET_MANIPULATION.warCost
+    if (p.cash < cost) return false
+
+    p.cash -= cost
+    p.stats.spent += cost
+    s.ops.market--
+    const factor = kind === 'limit' ? MARKET_MANIPULATION.limitFactor : MARKET_MANIPULATION.warFactor
+    const label = kind === 'limit' ? '限产抬价' : '价格战'
+    s.priceMods.push({ resource: res, factor, turns: MARKET_MANIPULATION.duration, label: `${p.name}·${label}` })
+    // 立即体现在市价上（复用卡牌的价格冲击口径：一次冲击而非只改夹逼下界）
+    applyPriceShock(this, res, factor)
+
+    if (kind === 'war') {
+      // 价格战记仇：对持有该资源最多的存活对手（不含自己）记一笔
+      const victims = s.players.filter(x => x.alive && x.id !== p.id)
+      if (victims.length) {
+        const hit = victims.sort((a, b) => (b.resources[res] ?? 0) - (a.resources[res] ?? 0))[0]
+        remember(s, hit.id, p.id, 'pricewar')
+      }
+      this.log(`「${p.name}」发动价格战！${RESOURCES[res].name}市价 -30%（全桌震荡，结下梁子）`, p.id)
+    } else {
+      this.log(`「${p.name}」宣布${RESOURCES[res].name}限产！市价 +25%（持有者可趁机高价卖出）`, p.id)
+    }
+    this.sfx('coin')
+    this.markChanged()
+    return true
+  }
+
+  /**
+   * 桥梁定价权（交通咽喉垄断）：桥主临时提高自己那座桥的过路费（×1.5，持续 2 轮）。
+   * 全桌过桥者都要多交 → 对手有动力绕行（多走 3 步免过路费）、抢桥或举报。
+   * 每回合限 1 次；桥需已升级（0 级收费为 0，提价无意义）。
+   */
+  priceBridge(tileIndex: number): boolean {
+    const s = this.state
+    const p = s.players[s.currentPlayer]
+    if (!p?.alive || s.phase !== 'action') return false
+    if (s.ops.bridgePrice <= 0) return false
+    const tile = s.tiles[tileIndex]
+    if (!tile || tile.type !== 'bridge' || tile.owner !== p.id) return false
+    if (tile.bridgeLevel < BRIDGE_PRICING.minLevel) return false
+    if (tile.bridgeClosed > 0) return false
+    if (p.cash < BRIDGE_PRICING.cost) return false
+
+    p.cash -= BRIDGE_PRICING.cost
+    p.stats.spent += BRIDGE_PRICING.cost
+    s.ops.bridgePrice--
+    s.bridgeTollMods.push({
+      factor: BRIDGE_PRICING.factor,
+      turns: BRIDGE_PRICING.duration,
+      label: `${p.name}·提价`,
+      bridge: tileIndex,
+    })
+    const cfg = BRIDGES[tileIndex as typeof WEST_BRIDGE | typeof EAST_BRIDGE]
+    const newToll = Math.round((cfg.tolls[tile.bridgeLevel] * BRIDGE_PRICING.factor) / 10) * 10
+    this.log(`「${p.name}」提高「${tile.name}」通行费 ${Math.round((BRIDGE_PRICING.factor - 1) * 100)}%（现 ￥${newToll}，持续 ${BRIDGE_PRICING.duration} 轮）——对手可绕行 3 步免交`, p.id)
+    this.sfx('gavel')
+    this.markChanged()
+    return true
+  }
+
+  /**
+   * 断供（精准打击）：垄断者封锁某资源销路——其他人卖出只能拿到半价，自己不受影响。
+   * 用于掐断对手现金流：对手囤着货急需变现时，只能半价贱卖，长期被放血直到破产。
+   * 反制：反垄断举报（份额已在线）、抢地降低你的份额、等待断供到期。
+   */
+  blockSupply(res: ResourceType): boolean {
+    const s = this.state
+    const p = s.players[s.currentPlayer]
+    if (!p?.alive || s.phase !== 'action') return false
+    if (s.ops.market <= 0) return false
+    if (this.resourceShare(p.id, res) < MONOPOLY_WIN.terrainRatio) return false
+    if (p.cash < MARKET_MANIPULATION.dumpCost) return false
+    // 同一资源已有自己的断供：不重复叠加
+    if (s.supplyBlocks.some(b => b.resource === res && b.playerId === p.id && b.turns > 0)) return false
+
+    p.cash -= MARKET_MANIPULATION.dumpCost
+    p.stats.spent += MARKET_MANIPULATION.dumpCost
+    s.ops.market--
+    s.supplyBlocks.push({ resource: res, playerId: p.id, turns: MARKET_MANIPULATION.dumpTurns })
+    this.log(`「${p.name}」封锁${RESOURCES[res].name}销路（断供 ${MARKET_MANIPULATION.dumpTurns} 轮）：其他人只能半价卖出，自己的销路不受影响`, p.id)
+    this.sfx('lose')
     this.markChanged()
     return true
   }
@@ -487,8 +613,6 @@ export class Game implements GameApi {
     this.log(`「${fromP.name}」与「${toP.name}」达成交易`)
     this.sfx('coin')
     this.markChanged()
-    checkMonopolyVictory(this)
-    if (this.state.winner !== null) this.endAction()
     return true
   }
 
@@ -542,6 +666,7 @@ export class Game implements GameApi {
       firstBankruptTurn: null,
       winner: null,
       endReason: null,
+      monopolyHold: null,
       bankruptOrder: [],
       log: [],
       casinoBets: [],
@@ -552,9 +677,10 @@ export class Game implements GameApi {
       aiBrains: [],
       aiDifficulty: (opts.aiDifficulty ?? 'normal') as AiDifficulty,
       marketPressure: { wood: 0, beef: 0, oil: 0, fish: 0 },
+      supplyBlocks: [],
       ops: { ...TURN_OP_LIMITS },
-      gdp: 0,
-      gdpPrev: 0,
+      totalWealth: 0,
+      totalWealthPrev: 0,
       climate: 'normal',
       climateTurns: 0,
       recessionStreak: 0,
@@ -564,9 +690,9 @@ export class Game implements GameApi {
 
     s.players = setups.map((st, i) => this.makePlayer(i, st))
     s.aiBrains = createBrains(s.players, s.aiDifficulty, this.rng)
-    // GDP 基线：开局资产（首轮涨跌相对开局比较，避免从 0 起算出现虚假暴涨）
-    s.gdp = this.gdpNow()
-    s.gdpPrev = s.gdp
+    // 总财富基线：开局资产（首轮涨跌相对开局比较，避免从 0 起算出现虚假暴涨）
+    s.totalWealth = this.totalWealthNow()
+    s.totalWealthPrev = s.totalWealth
     this.fateDeck = this.rng.shuffle(FATE_DECK)
     this.chanceDeck = this.rng.shuffle(CHANCE_DECK)
 
@@ -644,6 +770,9 @@ export class Game implements GameApi {
       // （读档恢复用的轮转逻辑），会造成上轮最后行动的玩家连续行动两次——末尾连续两轮都是自己
       s.currentPlayer = s.turnOrder[0] ?? 0
 
+      // 轮末：更新垄断状态（不判胜——垄断是压制手段，胜负仍靠淘汰）
+      if (s.winner === null && !this.stopped) updateMonopolyStatus(this)
+
       // 轮末：终局经济危机按「轮」结算（旧实现放在每个玩家的 endTurn 里，
       // 2 人终局每 5 个行动就缩水一次，实际是 2.5 轮而非文案的 5 轮）
       if (s.winner === null && !this.stopped) await checkCrisis(this)
@@ -660,9 +789,9 @@ export class Game implements GameApi {
         if (p.status.reportCooldown > 0) p.status.reportCooldown--
       }
 
-      // 轮末 GDP 统计：与上轮对比，顶栏箭头显示涨跌
-      s.gdpPrev = s.gdp
-      s.gdp = this.gdpNow()
+      // 轮末总财富统计：与上轮对比，顶栏箭头显示涨跌
+      s.totalWealthPrev = s.totalWealth
+      s.totalWealth = this.totalWealthNow()
       this.updateClimate()
       this.markChanged()
     }
@@ -688,25 +817,25 @@ export class Game implements GameApi {
     this.markChanged()
   }
 
-  /** 当前 GDP：总资产扣除银行无偿发放（起点奖励/卡牌补贴等「没有创造」的印钞），只计真实经济 */
-  private gdpNow(): number {
+  /** 当前总财富：总资产扣除银行无偿发放（起点奖励/卡牌补贴等「没有创造」的印钞），只计真实经济 */
+  private totalWealthNow(): number {
     const windfall = this.state.players.reduce(
       (sum, p) => sum + (p.stats.bankIn ?? 0) + (p.stats.startBonus ?? 0),
       0,
     )
-    return gdpValue(this) - windfall
+    return totalWealthValue(this) - windfall
   }
 
-  /** 轮末景气评估：按 GDP 涨跌幅判定繁荣/正常/衰退；连续衰退转危机（持续 5 轮锁定） */
+  /** 轮末景气评估：按总财富涨跌幅判定繁荣/正常/衰退；连续衰退转危机（持续 5 轮锁定） */
   private updateClimate(): void {
     const s = this.state
     const prev = s.climate
     if (s.climate === 'crisis') {
-      // 危机期间锁定，倒计时结束解除（下一轮再按 GDP 重评）
+      // 危机期间锁定，倒计时结束解除（下一轮再按总财富重评）
       s.climateTurns--
       if (s.climateTurns <= 0) s.climate = 'normal'
     } else {
-      const rel = s.gdpPrev > 0 ? (s.gdp - s.gdpPrev) / s.gdpPrev : 0
+      const rel = s.totalWealthPrev > 0 ? (s.totalWealth - s.totalWealthPrev) / s.totalWealthPrev : 0
       if (rel >= CLIMATE.boomDelta) {
         s.climate = 'boom'
         s.recessionStreak = 0
@@ -742,6 +871,7 @@ export class Game implements GameApi {
     s.outputModAll = decay(s.outputModAll)
     s.outputModsRes = decay(s.outputModsRes)
     s.priceMods = decay(s.priceMods)
+    s.supplyBlocks = decay(s.supplyBlocks)
   }
 
   /** 行动顺序中 id 之后的下一位存活玩家（用于存档边界） */
@@ -809,7 +939,10 @@ export class Game implements GameApi {
     saved.firstBankruptTurn = saved.firstBankruptTurn ?? null
     saved.endReason = saved.endReason ?? null
     saved.marketPressure = saved.marketPressure ?? { wood: 0, beef: 0, oil: 0, fish: 0 }
+    saved.supplyBlocks = saved.supplyBlocks ?? []   // 旧存档补断供状态
     saved.ops = saved.ops ?? { ...TURN_OP_LIMITS }
+    saved.ops.market = saved.ops.market ?? 1   // 旧存档补市场操纵配额
+    saved.ops.bridgePrice = saved.ops.bridgePrice ?? 1   // 旧存档补桥梁提价配额
     // v1.0.2 前存档是单个 casinoBet 槽位：迁移为数组，避免读档丢注
     const legacyBet = (saved as GameState & { casinoBet?: CasinoBet | null }).casinoBet
     saved.casinoBets = saved.casinoBets ?? (legacyBet ? [legacyBet] : [])
@@ -829,9 +962,19 @@ export class Game implements GameApi {
     }
     this.stopped = false
     this.state = saved
-    // 旧存档无 GDP 字段：按当前口径重建首值并保持持平（避免首轮涨跌失真）
-    if (!this.state.gdp) this.state.gdp = this.gdpNow()
-    if (!this.state.gdpPrev) this.state.gdpPrev = this.state.gdp
+    // 旧存档字段迁移：v2 及以前叫 gdp/gdpPrev，改名为总财富后迁移过来，避免玩家丢档
+    const legacy = this.state as typeof this.state & { gdp?: number; gdpPrev?: number }
+    if (legacy.gdp !== undefined && this.state.totalWealth === undefined) {
+      this.state.totalWealth = legacy.gdp
+      this.state.totalWealthPrev = legacy.gdpPrev ?? legacy.gdp
+      delete legacy.gdp
+      delete legacy.gdpPrev
+    }
+    // 无该字段的更旧存档：按当前口径重建首值并保持持平（避免首轮涨跌失真）
+    if (!this.state.totalWealth) this.state.totalWealth = this.totalWealthNow()
+    if (!this.state.totalWealthPrev) this.state.totalWealthPrev = this.state.totalWealth
+    // 旧存档缺垄断冲刺字段兜底
+    this.state.monopolyHold = this.state.monopolyHold ?? null
     // 旧存档缺景气/路障字段兜底
     this.state.climate = this.state.climate ?? 'normal'
     this.state.climateTurns = this.state.climateTurns ?? 0
@@ -1040,7 +1183,8 @@ export class Game implements GameApi {
         break
       }
       // 踏上桥前格：前方桥梁收费时，付过路费正常过桥；
-      // 仅冬季河流结冰可选踏冰绕行（多花 3 步免过路费），其他季节无此策略
+      // 仅冬季河面结冰可"踏冰绕行"（多花 3 步免过路费），其他季节只能交费——
+      // 稀缺的反制窗口让桥主提价更有威慑力，冬季则成为过桥者的机会窗。
       if (p.pos === WEST_BRIDGE - 1 || p.pos === EAST_BRIDGE - 1) {
         const bridgeIdx = p.pos === WEST_BRIDGE - 1 ? WEST_BRIDGE : EAST_BRIDGE
         const bridge = s.tiles[bridgeIdx]
@@ -1055,8 +1199,9 @@ export class Game implements GameApi {
               i += 2   // 绕行共走 3 步（本步 + 额外 2 步）
               // 先发动画事件：渲染层立刻进入 animating，随后 log 触发的 syncAll 才不会把棋子瞬移到对岸
               this.emit('bridge-bypass', { playerId: p.id, from, to: p.pos, bridge: bridgeIdx })
-              this.log(`「${p.name}」踏冰绕行避开「${bridge.name}」，免交过路费 ${toll}（绕行 3 步，多花 1 步）`, p.id)
-              this.emit('float', { tile: bridgeIdx, text: '🧊 踏冰绕行', color: '#a8d8ff' })
+              const winter = s.season === 'winter'
+              this.log(`「${p.name}」${winter ? '踏冰' : '绕道'}避开「${bridge.name}」，免交过路费 ${toll}（绕行 3 步，多花 1 步）`, p.id)
+              this.emit('float', { tile: bridgeIdx, text: winter ? '🧊 踏冰绕行' : '↩ 绕道而行', color: winter ? '#a8d8ff' : '#d9c08a' })
               this.sfx('ding')
             }
           }
@@ -1117,7 +1262,7 @@ export class Game implements GameApi {
       owner.cash -= cut
       sh.cash += cut
       // 股份分成是玩家间转移而非银行发放：只调整租金归属统计。
-      // 旧实现记入 bankIn/bankOut，会让 GDP 口径把这笔转移误当成印钞扣掉。
+      // 旧实现记入 bankIn/bankOut，会让总财富口径把这笔转移误当成印钞扣掉。
       owner.stats.rentCollected -= cut
       sh.stats.rentCollected += cut
       this.log(`「${sh.name}」分得「${tile.name}」过路费 ${cut}（桥梁股份）`, sh.id)
@@ -1143,7 +1288,7 @@ export class Game implements GameApi {
       const profit = bet.amount
       p.cash += profit
       p.stats.earned += profit
-      // 赌场净盈利来自银行：计入 bankIn，GDP 口径才能扣掉这笔无中生有的钱
+      // 赌场净盈利来自银行：计入 bankIn，总财富口径才能扣掉这笔无中生有的钱
       p.stats.bankIn += profit
       this.log(`赌场：「${p.name}」押${bet.choice === 'big' ? '大' : '小'} ${bet.amount}，转到 ${r}，赢得 ${profit}！`, p.id)
       this.sfx('dice')

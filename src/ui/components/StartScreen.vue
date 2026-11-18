@@ -310,7 +310,7 @@ function resume(): void {
             <span class="rule-line" />· 暗战 ·<span class="rule-line" />
           </div>
         </div>
-        <p class="tagline">四季轮转 · 台风地震 · 桥梁垄断 · 局中博弈</p>
+        <p class="tagline">四季轮转 · 垄断反制 · 桥梁咽喉 · 局中博弈</p>
       </header>
 
       <div class="flourish">─ ❦ ─</div>

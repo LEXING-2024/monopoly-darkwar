@@ -2,14 +2,22 @@
 import { computed } from 'vue'
 import { respond, store } from '../store'
 import { RESOURCES } from '../../core/config'
-import type { Prompt } from '../../core/types'
+import type { Prompt, Terrain } from '../../core/types'
 import BaseModal from './BaseModal.vue'
 
 const props = defineProps<{
-  prompt: Extract<Prompt, { type: 'choose-resource' | 'choose-tile' }>
+  prompt: Extract<Prompt, { type: 'choose-resource' | 'choose-tile' | 'choose-terrain' }>
 }>()
 
 const isResource = computed(() => props.prompt.type === 'choose-resource')
+const isTerrain = computed(() => props.prompt.type === 'choose-terrain')
+
+const TERRAIN_META: Record<Terrain, { name: string; icon: string }> = {
+  forest: { name: '森林', icon: '🌲' },
+  plateau: { name: '高原', icon: '🐄' },
+  desert: { name: '沙漠', icon: '⛽' },
+  coast: { name: '沿海', icon: '🐟' },
+}
 </script>
 
 <template>
@@ -26,6 +34,16 @@ const isResource = computed(() => props.prompt.type === 'choose-resource')
             <span class="opt-icon">{{ RESOURCES[r].icon }}</span>
             {{ RESOURCES[r].name }}
             <span class="opt-price">市价 ￥{{ store.state?.market[r] }}</span>
+          </button>
+        </div>
+
+        <div v-else-if="isTerrain" class="options">
+          <button
+            v-for="terrain in prompt.options" :key="terrain"
+            class="opt paper-input" @click="respond(terrain)"
+          >
+            <span class="opt-icon">{{ TERRAIN_META[terrain].icon }}</span>
+            {{ TERRAIN_META[terrain].name }}区
           </button>
         </div>
 

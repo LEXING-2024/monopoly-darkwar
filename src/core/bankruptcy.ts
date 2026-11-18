@@ -1,7 +1,7 @@
 // ============ 破产与终局（文档 2.3） ============
 
-import { ENDGAME, RESOURCES } from './config'
-import type { GameApi, Player, ResourceType } from './types'
+import { ENDGAME, MONOPOLY_WIN, RESOURCES } from './config'
+import type { GameApi, Player, ResourceType, Terrain } from './types'
 
 /**
  * 强制变卖：资源半价出售、建筑半价折现，直到凑够目标金额。
@@ -87,8 +87,7 @@ export async function declareBankruptcy(game: GameApi, playerId: number, credito
   game.sfx('lose')
   game.emit('bankrupt', { playerId, creditor })
 
-  // 资产整体移交后，债权人可能就此凑齐某地形全部地块 → 垄断胜利
-  checkMonopolyVictory(game)
+  // 垄断胜利改为轮末统一判定（需连续维持），此处不再即时检查
 
   // 终局规则
   const alive = s.players.filter(x => x.alive)
@@ -147,22 +146,47 @@ export async function checkCrisis(game: GameApi): Promise<void> {
   }
 }
 
-/** 垄断判决：拥有某类资源全部地块直接胜利 */
-export function checkMonopolyVictory(game: GameApi): boolean {
+/** 地形中文名（垄断冲刺日志用） */
+const TERRAIN_NAMES: Record<Terrain, string> = { forest: '森林', plateau: '高原', desert: '沙漠', coast: '沿海' }
+
+/**
+ * 垄断状态追踪（不判胜）：垄断不是胜利条件，而是"压制全桌的武器"。
+ * 每轮末更新谁在垄断哪类资源、已维持多少轮，供 UI 显示与"断供"等垄断手段判定用。
+ * 权重（份额）跌破门槛即清空。胜负仍靠淘汰——用垄断手段把对手现金流逼断、最终破产出局。
+ */
+export function updateMonopolyStatus(game: GameApi): void {
   const s = game.state
-  if (s.winner !== null) return false   // 已有胜者：避免后续资产变动覆盖结果
-  const terrains = ['forest', 'plateau', 'desert', 'coast'] as const
-  for (const terrain of terrains) {
-    const all = s.tiles.filter(t => t.type === 'terrain' && t.terrain === terrain)
-    if (all.length === 0) continue
-    for (const p of s.players) {
-      if (!p.alive) continue
-      if (all.every(t => t.owner === p.id)) {
-        s.winner = p.id
-        game.log(`「${p.name}」垄断了${terrain}资源，触发垄断判决，直接获胜！`, p.id)
-        return true
+  const terrains: Terrain[] = ['forest', 'plateau', 'desert', 'coast']
+
+  // 找出当前占比最高且越过"垄断线"的玩家+地形（每人只取其最强的那类地形）
+  let best: { playerId: number; terrain: Terrain; ratio: number } | null = null
+  for (const p of s.players) {
+    if (!p.alive) continue
+    for (const terrain of terrains) {
+      const all = s.tiles.filter(t => t.type === 'terrain' && t.terrain === terrain)
+      if (!all.length) continue
+      const owned = all.filter(t => t.owner === p.id).length
+      const ratio = owned / all.length
+      if (ratio >= MONOPOLY_WIN.terrainRatio && (!best || ratio > best.ratio)) {
+        best = { playerId: p.id, terrain, ratio }
       }
     }
   }
-  return false
+
+  // 未达门槛：清空垄断状态
+  if (!best) {
+    if (s.monopolyHold) s.monopolyHold = null
+    return
+  }
+
+  const prev = s.monopolyHold
+  const same = prev && prev.playerId === best.playerId && prev.terrain === best.terrain
+  const rounds = same ? prev!.rounds + 1 : 1
+  const firstTime = !same
+  s.monopolyHold = { playerId: best.playerId, terrain: best.terrain, rounds }
+
+  // 首次达成时提示全桌（这是"你已被盯上"的信号，也是举报窗口的开启）
+  if (firstTime) {
+    game.log(`「${s.players[best.playerId].name}」控制了 ${Math.round(best.ratio * 100)}% 的${TERRAIN_NAMES[best.terrain]}资源，形成垄断——可对其发起反垄断举报，或用垄断手段反制`, best.playerId)
+  }
 }

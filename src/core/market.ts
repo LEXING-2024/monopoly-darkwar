@@ -1,7 +1,8 @@
 // ============ 资源市场（文档 4.3 / 9.4） ============
 
 import {
-  BULK_SALE_DISCOUNT, BULK_SALE_THRESHOLD, MARKET_PRESSURE_COEF, MARKET_PRESSURE_THRESHOLD,
+  BUILDING_DEFS, BULK_SALE_DISCOUNT, BULK_SALE_THRESHOLD, INDUSTRY_LEADER,
+  MARKET_PRESSURE_COEF, MARKET_PRESSURE_THRESHOLD,
   MARKET_REVERT, MARKET_WALK, MARKET_WALK_ENDGAME,
   PRICE_CLAMP_MAX, PRICE_CLAMP_MIN, RESOURCES, SEASONS,
 } from './config'
@@ -37,11 +38,44 @@ export function applyPriceShock(game: GameApi, res: ResourceType, factor: number
   )
 }
 
-/** 出售资源的成交单价（大量抛售当笔折价、无人机物流加成） */
+/** 某资源的"行业龙头"：该类地形上生产建筑（伐木场/牧场/油井/渔港）数量最多的玩家。
+ *  并列时取建筑总等级更高者；仍并列则返回 null（避免多个龙头）。
+ *  至少要有 INDUSTRY_LEADER.minBuildings 座才算。 */
+export function industryLeader(game: GameApi, res: ResourceType): number | null {
+  const terrain = RESOURCES[res].terrain
+  const counts = new Map<number, { n: number; lv: number }>()
+  for (const t of game.state.tiles) {
+    if (t.owner === null || t.type !== 'terrain') continue
+    for (const b of t.buildings) {
+      const def = BUILDING_DEFS[b.type]
+      if (!def || def.category !== 'production' || def.terrain !== terrain) continue
+      const cur = counts.get(t.owner) ?? { n: 0, lv: 0 }
+      cur.n++
+      cur.lv += b.level
+      counts.set(t.owner, cur)
+    }
+  }
+  let best: { id: number; n: number; lv: number } | null = null
+  let tie = false
+  for (const [id, v] of counts) {
+    const p = game.state.players[id]
+    if (!p?.alive || v.n < INDUSTRY_LEADER.minBuildings) continue
+    if (!best || v.n > best.n || (v.n === best.n && v.lv > best.lv)) {
+      best = { id, ...v }
+      tie = false
+    } else if (best && v.n === best.n && v.lv === best.lv) {
+      tie = true
+    }
+  }
+  return best && !tie ? best.id : null
+}
+
+/** 出售资源的成交单价（大量抛售当笔折价、无人机物流加成、行业龙头溢价） */
 export function sellUnitPrice(game: GameApi, playerId: number, res: ResourceType, units: number): number {
   let p = game.state.market[res]
   if (units >= BULK_SALE_THRESHOLD) p *= BULK_SALE_DISCOUNT
   if (ownsTech(game, playerId, 'drone-logistics')) p *= 1.1
+  if (industryLeader(game, res) === playerId) p *= INDUSTRY_LEADER.sellBonus
   return p
 }
 
