@@ -51,3 +51,14 @@ Thumbs.db
 需求文档.md
 经济参数.md
 游戏截图/
+
+# ===== 本地中间文档 / 需求与分析资料（只保留 README 入库）=====
+/CHANGELOG.md
+/AI_FirstAuthor_Pipeline_General.md
+/卡牌系统优化方案.md
+/卡牌设计合理性评估.md
+/垄断与反垄断优化方案.md
+/游戏代码分析报告.md
+/视频简介文案.md
+/垄断博弈玩法速览.mp4
+/.workbuddy/
