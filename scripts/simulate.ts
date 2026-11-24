@@ -21,7 +21,8 @@ interface MoneyFlow {
 async function runOne(seed: number, count: number): Promise<{
   turns: number; winner: number; error: string | null; bankrupt: number;
   endReason: 'last-standing' | 'monopoly' | 'timeout' | null;
-  alive: number; playerCount: number; firstBankrupt: number | null; flow: MoneyFlow | null
+  alive: number; playerCount: number; firstBankrupt: number | null; flow: MoneyFlow | null;
+  turnOrder: number[];
 }> {
   const game = new Game()
   game.muted = true
@@ -51,6 +52,7 @@ async function runOne(seed: number, count: number): Promise<{
       playerCount: s.players.length,
       firstBankrupt: s.firstBankruptTurn,
       flow,
+      turnOrder: [...s.turnOrder],
     }
   } catch (e) {
     return {
@@ -59,6 +61,7 @@ async function runOne(seed: number, count: number): Promise<{
       alive: game.state?.players.filter(p => p.alive).length ?? 0,
       playerCount: game.state?.players.length ?? count,
       firstBankrupt: game.state?.firstBankruptTurn ?? null, flow: null,
+      turnOrder: [...(game.state?.turnOrder ?? [])],
     }
   }
 }
@@ -72,11 +75,15 @@ async function main() {
   let lastStandingWins = 0
   const turnCounts: number[] = []
   const firstBankrupts: number[] = []
+  const tailGaps: number[] = []   // 首破产 → 终局 的行动数（衡量垃圾时间）
   const winners = new Map<string, number>()
   const bankruptDist = new Map<number, number>()
   // 按人数分组的终局质量（4/8 人局节奏差异很大，必须分开看）
   const byCount = new Map<number, {
     turns: number[]; lastStanding: number; monopoly: number; timeout: number; aliveAtTimeout: number[]
+    winners: Map<number, number>   // 行动位次（1 起）→ 获胜局数
+    firstRollWins: number
+    games: number
   }>()
   // 金钱流向汇总（跨全部对局累计）
   const money = {
@@ -110,14 +117,22 @@ async function main() {
         else if (r.endReason === 'last-standing') lastStandingWins++
         let bc = byCount.get(r.playerCount)
         if (!bc) {
-          bc = { turns: [], lastStanding: 0, monopoly: 0, timeout: 0, aliveAtTimeout: [] }
+          bc = {
+            turns: [], lastStanding: 0, monopoly: 0, timeout: 0, aliveAtTimeout: [],
+            winners: new Map<number, number>(), firstRollWins: 0, games: 0,
+          }
           byCount.set(r.playerCount, bc)
         }
         bc.turns.push(r.turns)
+        bc.games++
+        const seat = r.winner >= 0 ? r.turnOrder.indexOf(r.winner) + 1 : 0
+        if (seat > 0) bc.winners.set(seat, (bc.winners.get(seat) ?? 0) + 1)
+        if (r.winner >= 0 && r.winner === r.turnOrder[0]) bc.firstRollWins++
         if (r.endReason === 'last-standing') bc.lastStanding++
         else if (r.endReason === 'monopoly') bc.monopoly++
         else if (r.endReason === 'timeout') { bc.timeout++; bc.aliveAtTimeout.push(r.alive) }
         if (r.firstBankrupt !== null) firstBankrupts.push(r.firstBankrupt)
+        if (r.firstBankrupt !== null) tailGaps.push(Math.max(0, r.turns - r.firstBankrupt))
         winners.set(String(r.winner), (winners.get(String(r.winner)) ?? 0) + 1)
         bankruptDist.set(r.bankrupt, (bankruptDist.get(r.bankrupt) ?? 0) + 1)
         // 金钱流向汇总
@@ -147,6 +162,11 @@ async function main() {
     const fbp = (p: number) => fb[Math.min(fb.length - 1, Math.floor(fb.length * p))]
     const early = firstBankrupts.filter(t => t <= 100).length
     console.log(`最早破产回合：最少 ${fb[0]} / 中位 ${fbp(0.5).toFixed(0)} / 平均 ${fbAvg.toFixed(0)}；其中 ≤100 回合就有人破产 ${early} 局（${(early / firstBankrupts.length * 100).toFixed(1)}%）`)
+    if (tailGaps.length) {
+      const gaps = [...tailGaps].sort((a, b) => a - b)
+      const gp = (p: number) => gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * p))]
+      console.log(`首破产 → 终局：中位 ${gp(0.5).toFixed(0)} 行动（P25 ${gp(0.25).toFixed(0)} / P75 ${gp(0.75).toFixed(0)}）——越短说明垃圾时间越少`)
+    }
   } else {
     console.log('最早破产回合：无（所有对局无人破产）')
   }
@@ -158,8 +178,15 @@ async function main() {
       ? (bc.aliveAtTimeout.reduce((a, b) => a + b, 0) / bc.aliveAtTimeout.length).toFixed(1)
       : '—'
     console.log(`  ${n} 人局：中位 ${med} · 淘汰 ${bc.lastStanding} / 垄断 ${bc.monopoly} / 超时 ${bc.timeout}（超时平均仍存活 ${avgAlive} 人）`)
+    // 胜者分布按实际人数归一化：4/8 人混跑时原始 1~8 号计数没有可比性
+    const seatText = [...bc.winners.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([seat, wins]) => `${seat} 号 ${wins} 局 ${(wins / Math.max(1, bc.games) * 100).toFixed(1)}%`)
+      .join(' · ')
+    console.log(`  ${n} 人局胜者分布：${seatText}`)
+    console.log(`  ${n} 人局开局掷点最高者胜率：${(bc.firstRollWins / Math.max(1, bc.games) * 100).toFixed(1)}%（期望 ${(100 / n).toFixed(1)}%，样本 ${bc.games} 局；先手每轮轮换，此指标仅参考）`)
   }
-  console.log(`胜者分布：${[...winners.entries()].map(([k, v]) => `${k} 号 ${v} 局`).join('，')}`)
+  console.log(`胜者分布（全员混跑原始计数）：${[...winners.entries()].map(([k, v]) => `${k} 号 ${v} 局`).join('，')}`)
   console.log(`破产人数分布：${[...bankruptDist.entries()].map(([k, v]) => `${k} 人破产 ${v} 局`).join('，')}`)
   // 金钱流向构成（全部对局累计）
   const m = money

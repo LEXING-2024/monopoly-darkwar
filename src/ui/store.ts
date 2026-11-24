@@ -22,6 +22,8 @@ interface StoreShape {
    *  player 记录发起提示的玩家 id，现金实时从该玩家读取——Toast 停留期间回合可能已推进，
    *  不能直接读 store.state.currentPlayer（那是“当前行动者”，可能已换成 AI） */
   noMoneyToast: { need: number; what: string; player: number } | null
+  /** 人类被淘汰：显示结算弹窗（排名/资产/观战或回主页），游戏在后台继续 */
+  eliminated: { playerId: number; rank: number; assets: number; reason: string } | null
 }
 
 const VOLUME_KEY = 'monopoly-volume-v1'
@@ -51,6 +53,7 @@ export const store = reactive<StoreShape>({
   saveToast: '',
   loading: false,
   noMoneyToast: null,
+  eliminated: null,
 })
 setSfxVolume(initialVolume)
 
@@ -102,10 +105,21 @@ function attachGame(game: Game): void {
     store.buildingDetail = d
   }))
   offs.push(game.on('save-ready', (json: string) => {
-    localStorage.setItem(SAVE_KEY, json)
+    try { localStorage.setItem(SAVE_KEY, json) } catch (e) {
+      console.warn('[save] 本地存档失败（存储空间不足或隐私模式）', e)
+      store.saveToast = '保存失败：存储空间不足'
+      if (saveToastTimer) clearTimeout(saveToastTimer)
+      saveToastTimer = setTimeout(() => { store.saveToast = ''; saveToastTimer = null }, 3200)
+      return
+    }
     store.saveToast = '已保存'
     if (saveToastTimer) clearTimeout(saveToastTimer)
     saveToastTimer = setTimeout(() => { store.saveToast = ''; saveToastTimer = null }, 2200)
+  }))
+  // 人类出局：弹出结算/观战选择；不阻塞核心循环（AI 继续打）
+  offs.push(game.on('human-eliminated', (data: { playerId: number; rank: number; assets: number; reason: string }) => {
+    store.eliminated = data
+    store.tileModalOpen = false
   }))
   // 棋盘场景 create() 完成后发出：等一帧渲染再撤掉加载遮罩，避免闪空白
   offs.push(game.on('board-ready', () => {
@@ -139,6 +153,7 @@ export function startGame(setups: PlayerSetup[], seed?: number): void {
   store.tileModalOpen = false
   store.loading = true
   store.noMoneyToast = null
+  store.eliminated = null
   clearManagedTimers()   // 切到新对局前清掉旧局的 saveToast / loading 兜底定时器
   // 兜底：15 秒后仍未收到 board-ready（极端环境挂起）时撤掉遮罩，避免永久卡在加载中
   loadingFallbackTimer = setTimeout(() => {
@@ -173,6 +188,7 @@ export function loadGame(): void {
   store.selectedTile = -1
   store.tileModalOpen = false
   store.loading = true
+  store.eliminated = null
   loadingFallbackTimer = setTimeout(() => {
     loadingFallbackTimer = null
     if (store.loading && store.game === game) store.loading = false
@@ -219,4 +235,5 @@ export function backToMenu(): void {
   store.tileModalOpen = false
   store.loading = false
   store.noMoneyToast = null
+  store.eliminated = null
 }

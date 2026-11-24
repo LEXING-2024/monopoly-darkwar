@@ -113,6 +113,10 @@ export interface AiProfile {
   mistakeProb: number     // 犯错概率：随机动作替代最优（难度）
   lookahead: number       // 预判深度 0~2（难度）
   cashSafety: number      // 现金安全线系数（难度）
+  /** 垄断冲刺倾向（难度行为层，旧存档缺省时按 0.6 处理） */
+  monopolyFocus?: number
+  /** 联合举报意愿（难度行为层，旧存档缺省时按 0.5 处理） */
+  jointReportAppetite?: number
 }
 
 export interface AiMemoryEntry {
@@ -240,6 +244,11 @@ export interface GameState {
   turn: number                 // 全局行动计数（每次玩家行动 +1）
   round: number                // 本季已进行的轮数（换季归零）：全部存活玩家各行动一次 = 1 轮
   totalRound: number           // 全局总轮数（跨季节累计，用于展示）
+  /** 主随机源内部状态：随存档保存，读档后继续同一随机序列（保证种子局可复现） */
+  rngState: number
+  /** 命运/机会牌堆剩余牌序（存 id，读档不重洗） */
+  fateDeck: string[]
+  chanceDeck: string[]
   season: Season
   seasonTurn: number           // 本季已进行的轮数
   seasonLen: number            // 本季持续轮数（10~15 随机，每季重新抽取）
@@ -307,7 +316,7 @@ export type Prompt =
   | { type: 'order-result'; order: { playerId: number; name: string; color: string; value: number; isAI: boolean }[]; player: number }
   | { type: 'notice'; title: string; text: string; icon?: string; player: number; auto?: boolean }
   | { type: 'buy'; tile: number; price: number; player: number }
-  | { type: 'card'; cardId: string; category: 'fate' | 'chance'; name: string; desc: string; icon: string; canDecline: boolean; player: number }
+  | { type: 'card'; cardId: string; category: 'fate' | 'chance'; name: string; desc: string; icon: string; canDecline: boolean; player: number; cost?: number; costNote?: string }
   | { type: 'choose-resource'; title: string; desc: string; options: ResourceType[]; player: number; cardId?: string }
   | { type: 'choose-tile'; title: string; desc: string; tiles: number[]; player: number; cardId: string }
   | { type: 'choose-terrain'; title: string; desc: string; options: Terrain[]; player: number; cardId: string }
@@ -350,7 +359,9 @@ export interface GameApi {
   gain(player: number, amount: number, label: string): void
   runAuction(tile: number, startPrice: number, opts?: { exclude?: number; seller?: number }): Promise<number | null>
   drawFate(player: number): Promise<void>
-  drawChance(player: number, forced?: boolean): Promise<void>
+  /** 抽机会卡；freeOnly 时只抽免费卡（用于"特别好运"避免抽到付费卡二次扣费）。
+   *  返回是否真的抽到并结算了一张卡。 */
+  drawChance(player: number, forced?: boolean, opts?: { freeOnly?: boolean }): Promise<boolean>
   markChanged(): void
   isHuman(p: number): boolean
   rollDie(): number

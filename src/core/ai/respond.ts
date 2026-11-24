@@ -4,7 +4,7 @@
 import {
   EAST_BRIDGE, RESOURCES, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from '../config'
-import { cardMoney } from '../cards'
+import { cardCost } from '../cards'
 import { isMonopoly } from '../events'
 import { bridgeToll, tileRent } from '../economy'
 import { getBrain } from './brain'
@@ -184,46 +184,50 @@ function shouldAcceptCard(game: GameApi, playerId: number, cardId: string): bool
   const brain = getBrain(s, playerId)
   const safety = cashSafetyLine(game, playerId)
   const cash = p.cash
-  // 卡牌费用与总财富挂钩：金额 = 人均总财富 × 比例（与 cards.ts 的 cardMoney 一致）
-  const cost = (ratio: number) => cash - cardMoney(game, ratio) >= safety * 0.5
+  // 费用统一走 cardCost（目标型卡按基础上限估，实际结算只会更便宜）
+  const cost = (cardId: string) => cash - cardCost(game, cardId) >= safety * 0.5
+  const canPay = (amount: number) => cash - amount >= safety * 0.5
   const lookahead = Math.max(0, brain?.profile.lookahead ?? 1)
   switch (cardId) {
-    case 'invest-oilfield': return cost(0.015) && s.tiles.some(t => t.terrain === 'desert' && t.owner === null)
-    case 'bridge-share': return cost(0.025) && [WEST_BRIDGE, EAST_BRIDGE].some(i => s.tiles[i].owner !== null && s.tiles[i].owner !== playerId)
-    case 'temp-dock': return cost(0.01) && (s.tiles[WEST_BRIDGE].owner !== null || s.tiles[EAST_BRIDGE].owner !== null)
-    case 'speculate': return cost(0.06) && priceForecast(game, bestMarketRes(game), lookahead) >= 0.95
-    case 'geologist-hire': return cost(0.015) && s.tiles.some(t => t.owner === playerId && t.terrain === 'desert' && !t.explored)
-    case 'bribe': return cost(0.02) && isMonopoly(game, playerId)
-    case 'market-fair': return cost(0.01) && s.tiles.some(t => t.owner === playerId && t.baseRent > 0)
-    case 'temp-dam': return cost(0.015) && (s.season === 'spring' || (lookahead >= 1 && nextIsSpring(s)))
-    case 'auction-commission': return cost(0.005) && s.tiles.some(t => t.owner === null && t.type === 'terrain' && !t.seized)
+    case 'invest-oilfield': return cost('invest-oilfield') && s.tiles.some(t => t.terrain === 'desert' && t.owner === null)
+    case 'bridge-share': return cost('bridge-share') && [WEST_BRIDGE, EAST_BRIDGE].some(i => s.tiles[i].owner !== null && s.tiles[i].owner !== playerId)
+    case 'temp-dock': return cost('temp-dock') && (s.tiles[WEST_BRIDGE].owner !== null || s.tiles[EAST_BRIDGE].owner !== null)
+    case 'speculate': {
+      const res = bestMarketRes(game)
+      return canPay(Math.round((s.market[res] * 0.5 * 10) / 10) * 10) && priceForecast(game, res, lookahead) >= 0.95
+    }
+    case 'geologist-hire': return cost('geologist-hire') && s.tiles.some(t => t.owner === playerId && t.terrain === 'desert' && !t.explored)
+    case 'bribe': return cost('bribe') && isMonopoly(game, playerId)
+    case 'market-fair': return cost('market-fair') && s.tiles.some(t => t.owner === playerId && t.baseRent > 0)
+    case 'temp-dam': return cost('temp-dam') && (s.season === 'spring' || (lookahead >= 1 && nextIsSpring(s)))
+    case 'auction-commission': return cost('auction-commission') && s.tiles.some(t => t.owner === null && t.type === 'terrain' && !t.seized)
     case 'insurance': {
       // 风险承受低 / 高灾害季（夏季台风 / 冬季雪灾）→ 更愿买保险
       const risky = s.season === 'summer' || s.season === 'winter'
-      return cost(0.01) && (risky || (brain?.profile.riskTolerance ?? 0.5) < 0.4)
+      return cost('insurance') && (risky || (brain?.profile.riskTolerance ?? 0.5) < 0.4)
     }
-    case 'tech-invest': return cost(0.025) && s.tiles.some(t => t.owner === playerId && t.type === 'terrain' && t.buildings.length < 2)
+    case 'tech-invest': return cost('tech-invest') && s.tiles.some(t => t.owner === playerId && t.type === 'terrain' && t.buildings.length < 2)
     case 'dump-resources': return Object.values(p.resources).some(v => v > 0)
-    case 'water-invest': return cost(0.015)
-    case 'land-deal': return cost(0.04) && s.tiles.some(t => t.owner === null && t.type === 'terrain' && !t.seized)
+    case 'water-invest': return cost('water-invest')
+    case 'land-deal': return cost('land-deal') && s.tiles.some(t => t.owner === null && t.type === 'terrain' && !t.seized)
     case 'premium-sale': return Object.values(p.resources).some(v => v >= 5)
-    case 'energy-saving': return cost(0.01)
-    case 'hire-workers': return cost(0.008)
-    case 'informant': return cost(0.008) && s.tiles.some(t => t.owner === playerId && t.type === 'terrain' && !t.explored)
-    case 'bodyguard': return cost(0.015) && isMonopoly(game, playerId)
-    case 'repair-crew': return cost(0.012) && s.tiles.some(t => t.owner === playerId && t.buildings.some(b => b.damaged))
-    case 'sabotage': return cost(0.02) && s.tiles.some(t => t.owner !== null && t.owner !== playerId && t.buildings.length > 0)
-    case 'steal-resources': return cost(0.015) && s.players.some(
+    case 'energy-saving': return cost('energy-saving')
+    case 'hire-workers': return cost('hire-workers')
+    case 'informant': return cost('informant') && s.tiles.some(t => t.owner === playerId && t.type === 'terrain' && !t.explored)
+    case 'bodyguard': return cost('bodyguard') && isMonopoly(game, playerId)
+    case 'repair-crew': return cost('repair-crew') && s.tiles.some(t => t.owner === playerId && t.buildings.some(b => b.damaged))
+    case 'sabotage': return cost('sabotage') && s.tiles.some(t => t.owner !== null && t.owner !== playerId && t.buildings.length > 0)
+    case 'steal-resources': return cost('steal-resources') && s.players.some(
       p => p.alive && p.id !== playerId && (Object.keys(RESOURCES) as ResourceType[]).some(r => p.resources[r] > 0),
     )
-    case 'roadblock': return cost(0.015) && s.roadblock === null
+    case 'roadblock': return cost('roadblock') && s.roadblock === null
     case 'incite-defection': {
       const their = s.tiles.filter(t => t.type === 'terrain' && t.owner !== null && t.owner !== playerId)
-      return cost(0.03) && their.some(t =>
+      return cost('incite-defection') && their.some(t =>
         s.tiles.some(x => x.type === 'terrain' && x.owner === playerId && x.terrain === t.terrain),
       )
     }
-    default: return cost(0)
+    default: return true
   }
 }
 
@@ -433,7 +437,9 @@ function respondJoinReport(game: GameApi, playerId: number, targetId: number, co
   const grudgePush = brain ? brain.memory.filter(m => m.from === targetId).length * 200 : 0
   const coop = (brain?.profile.cooperation ?? 0.5)
   const aggression = (brain?.profile.aggression ?? 0.5)
-  const score = ev + grudgePush + (coop * 150 - 75) + aggression * 100
+  // 难度行为：联合举报意愿高则更愿意分摊成本，低则除非有私怨基本不参与
+  const appetite = brain?.profile.jointReportAppetite ?? 0.5
+  const score = ev + grudgePush + (coop * 150 - 75) + aggression * 100 + (appetite - 0.5) * 300
   const chosen = rollAction(game, brain!, [
     { value: true, score },
     { value: false, score: 0 },

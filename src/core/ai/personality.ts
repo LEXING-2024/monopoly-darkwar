@@ -20,6 +20,8 @@ export function makeProfile(rng: RNG, difficulty: AiDifficulty): AiProfile {
     mistakeProb: d.mistakeProb,
     lookahead: d.lookahead,
     cashSafety: d.cashSafety,
+    monopolyFocus: d.monopolyFocus,
+    jointReportAppetite: d.jointReportAppetite,
   }
 }
 

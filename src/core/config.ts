@@ -10,6 +10,10 @@ export const LOG_CAP = 200
 export const MAX_TURNS = 4000
 /** 前 N 轮保护期：不触发自然灾害（1 轮 = 全部存活玩家各行动一次） */
 export const SAFE_TURNS = 10
+/** 每淘汰一名玩家，全场租金额外上涨的比例（加速终局，减少"已有人出局后的垃圾时间"） */
+export const RENT_PER_ELIMINATION = 0.03
+/** 淘汰租金加成上限（相对 1 的额外倍率封顶） */
+export const RENT_ELIMINATION_MAX = 0.15
 /** 每回合操作配额（每位玩家独立计次：进入各自行动阶段时重置）。
  *  人类与 AI 同数：建造 ≤1、升级 ≤1、修理 ≤1、勘探 ≤1、修桥 ≤1。
  *  扣减位置统一：人类 UI 与 AI（act.ts）都走 game.buildAt/upgradeAt/repairAt/exploreAt/repairBridge，配额随当前玩家各自独立，互不共享。
@@ -345,15 +349,19 @@ export const QUAKE = {
 
 // ---------- 反垄断（文档 9.3，玩家主动举报制） ----------
 export const ANTITRUST = {
-  terrainRatio: 0.7,        // 垄断线：单类地形占比 ≥70%
+  terrainRatio: 0.7,        // 垄断线基线上限（实际按人数缩放，见 monopolyTerrainRatio）
   globalRatio: 0.5,         // 垄断线：全局地形占比 ≥50%
   reportCost: 300,          // 每位举报人费用
   reportProb: [0, 0.4, 0.7, 0.9],   // 按举报人数：1 人 40%、2 人 70%、3 人及以上 90%
+  /** 超出垄断线部分的成功率加成：按超线比例（0~1）× 该值附加，满线最多 +25% */
+  probOverageBonus: 0.25,
+  /** 超出垄断线部分的罚款加成：按超线比例（0~0.6）× 该值附加，最高封顶 35% */
+  fineOverageBonus: 0.35,
   lobby: [
     { cost: 300, mod: -0.1 }, { cost: 600, mod: -0.2 }, { cost: 1000, mod: -0.3 },
   ] as const,
   lobbyTurns: 5,            // 游说效果持续轮数
-  fineRatio: 0.15,          // 罚款 = 垄断地块总值的 15%
+  fineRatio: 0.15,          // 罚款 = 垄断地块总值的 15%（超线部分另加，见 fineOverageBonus）
   bountyRatio: 0.25,        // 举报人分享罚款的 25%（2026-08 提高博弈机制经济权重）
   cooldownRounds: 2,        // 举报失败后同一目标 2 轮内不可再被举报
   outcomes: ['fine', 'auction', 'output', 'breakup'] as const,
@@ -362,11 +370,32 @@ export const ANTITRUST = {
   breakupTransferRatio: 0.5,   // 转让作价 = 地价 × 50%
 }
 
+/** 垄断线随人数缩放：4 人 50%、5 人 55%、6 人 60%、7 人 65%、8 人 70%。
+ *  8 人局沿用旧基线 70%；小桌地块少、达成途径单一，门槛必须下调，
+ *  否则 4 人局只有"等对手破产后继承地块"才能摸到垄断线。 */
+export function monopolyTerrainRatio(playerCount: number): number {
+  const n = Math.max(2, Math.min(8, playerCount))
+  return Math.min(0.7, Math.max(0.5, 0.5 + (n - 4) * 0.05))
+}
+
+/** 双桥垄断的附加条件：两桥总等级 ≥ 2（避免刚买下 0 级桥就获得垄断资格）。
+ *  桥梁本身 0 级不收费，必须实际投入升级，桥权才算真正的"咽喉"。 */
+export const BRIDGE_MONOPOLY_MIN_LEVELS = 2
+
 // ---------- 终局（文档 2.3） ----------
 export const ENDGAME = {
   rentMod: 1.5,
-  crisisTurns: 5,
+  pressureRentMod: 1.0, // 3 人压力期先只靠经济危机倒计时，不额外叠租金；只剩 2 人才上 1.5
+  pressureAlive: 3,      // 存活 ≤3 人即开始"经济危机"压力（旧版只在 2 人时启动，导致后段拖沓）
+  crisisTurns: 6,
   crisisRatio: 0.3,
+}
+
+/** AI 估值口径常数（从 act.ts 的硬编码迁入，便于统一调参） */
+export const AI_EVAL = {
+  upgradeHorizon: 80,        // 升级回本视野（轮）
+  visitsPerOpponent: 6,      // 每名对手每轮经过某地块的期望次数
+  exploreHorizon: 60,        // 勘探收益折算视野（轮）
 }
 
 /** 资源市场操纵：垄断某资源地形达门槛后，可在行动阶段主动操纵该资源市价（影响全桌）。
@@ -407,20 +436,32 @@ export const CONTIGUOUS_BONUS = {
 
 /** 垄断线（非胜利条件）：某玩家对某类地形的占比达到此值即"形成垄断"。
  *  垄断不直接获胜，而是解锁压制全桌的手段（限产/价格战/断供），
- *  同时招致反垄断举报——胜负仍靠淘汰对手。 */
+ *  同时招致反垄断举报——胜负仍靠淘汰对手。
+ *  注意：实际门槛按人数缩放，业务代码统一调用 monopolyTerrainRatio(玩家数)，
+ *  此常量仅作 8 人局基线 / 旧存档兼容。 */
 export const MONOPOLY_WIN = {
-  terrainRatio: 0.7,   // 形成垄断的份额门槛（与举报线一致：一垄断就可被举报）
+  terrainRatio: 0.7,
 } as const
 
 // ---------- 卡牌（文档 5.2/5.3，季节加权） ----------
 export const SEASON_CARD_WEIGHT = 2   // 对应季节标签权重 ×2
 
-// ---------- AI 难度分级（噪声 / 犯错 / 预判 / 现金安全线，全部可调） ----------
-export const AI_DIFFICULTY: Record<AiDifficulty, { label: string; noiseAmp: number; mistakeProb: number; lookahead: number; cashSafety: number }> = {
-  easy: { label: '简单', noiseAmp: 0.12, mistakeProb: 0.05, lookahead: 1, cashSafety: 1.0 },
-  normal: { label: '正常', noiseAmp: 0.05, mistakeProb: 0.01, lookahead: 1, cashSafety: 0.85 },
-  hard: { label: '困难', noiseAmp: 0.02, mistakeProb: 0, lookahead: 2, cashSafety: 0.7 },
-  hell: { label: '地狱', noiseAmp: 0.01, mistakeProb: 0, lookahead: 3, cashSafety: 0.6 },
+// ---------- AI 难度分级（噪声 / 犯错 / 预判 / 现金安全线 / 行为倾向，全部可调） ----------
+export const AI_DIFFICULTY: Record<AiDifficulty, {
+  label: string
+  noiseAmp: number
+  mistakeProb: number
+  lookahead: number
+  cashSafety: number
+  /** 垄断冲刺倾向：越高越早锁定某地形冲刺（0~1） */
+  monopolyFocus: number
+  /** 联合举报倾向：越高越愿意加入别人的举报（0~1） */
+  jointReportAppetite: number
+}> = {
+  easy: { label: '简单', noiseAmp: 0.12, mistakeProb: 0.05, lookahead: 1, cashSafety: 1.0, monopolyFocus: 0.3, jointReportAppetite: 0.2 },
+  normal: { label: '正常', noiseAmp: 0.05, mistakeProb: 0.01, lookahead: 1, cashSafety: 0.85, monopolyFocus: 0.6, jointReportAppetite: 0.5 },
+  hard: { label: '困难', noiseAmp: 0.02, mistakeProb: 0, lookahead: 2, cashSafety: 0.7, monopolyFocus: 0.85, jointReportAppetite: 0.8 },
+  hell: { label: '地狱', noiseAmp: 0.01, mistakeProb: 0, lookahead: 3, cashSafety: 0.6, monopolyFocus: 1, jointReportAppetite: 1 },
 }
 export const AI_DIFFICULTY_ORDER: AiDifficulty[] = ['easy', 'normal', 'hard', 'hell']
 

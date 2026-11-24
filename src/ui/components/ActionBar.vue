@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { store } from '../store'
-import { ANTITRUST, BRIDGES, BRIDGE_PRICING, MARKET_MANIPULATION, MONOPOLY_WIN, RESOURCES, RESOURCE_ORDER } from '../../core/config'
+import { ANTITRUST, BRIDGES, BRIDGE_PRICING, MARKET_MANIPULATION, monopolyTerrainRatio, RESOURCES, RESOURCE_ORDER } from '../../core/config'
 import { monopolyInfo, monopolyTargets } from '../../core/events'
 import type { ResourceType, TradeOffer } from '../../core/types'
 import Icon from './Icon.vue'
@@ -31,6 +31,8 @@ const lobbyLevel = computed(() => {
   const mod = me.value?.status.antitrustMod ?? 0
   return Math.max(0, -Math.round(mod / 0.1))
 })
+/** 垄断线按人数缩放：4 人局 50%…8 人局 70% */
+const monoLine = computed(() => monopolyTerrainRatio(s.value?.players.length ?? 4))
 
 // ---- 卖资源 ----
 const sell = reactive({ res: 'wood' as ResourceType, units: 1 })
@@ -167,11 +169,11 @@ const manipulable = computed(() => {
   }))
 })
 const marketLeft = computed(() => s.value?.ops.market ?? 0)
-/** 已达垄断线（70%）的资源——可断供（掐对手现金流），比 50% 的定价权更高一档 */
+/** 已达垄断线的资源——可断供（掐对手现金流），比 50% 的定价权更高一档 */
 const blockable = computed(() => {
   if (!game.value || !me.value) return []
   return (RESOURCE_ORDER as readonly ResourceType[])
-    .filter(r => game.value!.resourceShare(me.value!.id, r) >= MONOPOLY_WIN.terrainRatio)
+    .filter(r => game.value!.resourceShare(me.value!.id, r) >= monoLine.value)
     .map(r => ({ res: r, share: game.value!.resourceShare(me.value!.id, r) }))
 })
 const bridgePriceLeft = computed(() => s.value?.ops.bridgePrice ?? 0)
@@ -247,7 +249,7 @@ function doSell(): void {
       <!-- 举报菜单（主动举报制：垄断线 + 联合举报成功率） -->
       <div v-if="reportOpen && myTurn" class="submenu">
         <template v-if="reportTargets.length">
-          <div class="menu-tip">举报费 ￥{{ ANTITRUST.reportCost }}/人 · 1人 40% / 2人 70% / 3人+ 90%（AI 可能联合）</div>
+          <div class="menu-tip">举报费 ￥{{ ANTITRUST.reportCost }}/人 · 基础成功率 1人 40% / 2人 70% / 3人+ 90%；其他玩家（含人类）可收到联合邀请，垄断超出线越多成功率越高</div>
           <button
             v-for="t in reportTargets" :key="t.id"
             class="btn small" @click="game?.reportTarget(t.id); reportOpen = false"
@@ -257,7 +259,7 @@ function doSell(): void {
             </span>
           </button>
         </template>
-        <div v-else class="menu-tip">暂无玩家达到垄断线（单类地形≥70% / 全局≥50% / 双桥）</div>
+        <div v-else class="menu-tip">暂无玩家达到垄断线（单类地形 ≥{{ Math.round(monoLine * 100) }}% / 全局 ≥50% / 双桥且总等级≥2）</div>
         <button class="btn small" @click="reportOpen = false">取消</button>
       </div>
 
@@ -293,7 +295,7 @@ function doSell(): void {
         </template>
 
         <template v-if="blockable.length">
-          <div class="menu-tip">断供（达 {{ MONOPOLY_WIN.terrainRatio * 100 }}% 垄断线）：封锁销路，其他人卖该资源只能拿半价——用于掐断对手现金流</div>
+          <div class="menu-tip">断供（达 {{ Math.round(monoLine * 100) }}% 垄断线）：封锁销路，其他人卖该资源只能拿半价——用于掐断对手现金流</div>
           <template v-if="marketLeft > 0">
             <div v-for="b in blockable" :key="'b' + b.res" class="market-group">
               <div class="market-group-title">{{ RESOURCES[b.res].icon }} {{ RESOURCES[b.res].name }}（份额 {{ Math.round(b.share * 100) }}%）</div>

@@ -21,6 +21,11 @@ const player = computed(() => store.state?.players[props.prompt.player] ?? null)
       <div class="card-icon">{{ prompt.icon }}</div>
       <div class="card-name">{{ prompt.name }}</div>
       <div class="card-desc">{{ prompt.desc }}</div>
+      <div v-if="prompt.cost" class="card-cost">
+        费用 <b>￥{{ prompt.cost }}</b>
+        <span v-if="prompt.costNote" class="cost-note">{{ prompt.costNote }}</span>
+        <span v-else class="cost-note">执行时扣除，资金不足将无法执行</span>
+      </div>
       <div class="card-actions">
         <template v-if="prompt.canDecline">
           <button class="btn primary" @click="respond({ accept: true })">✔ 执行</button>
@@ -44,6 +49,13 @@ const player = computed(() => store.state?.players[props.prompt.player] ?? null)
 .dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #fff; display: inline-block; }
 .card-icon { font-size: 58px; margin: 10px 0 2px; }
 .card-name { color: #4a2d12; font-size: 21px; font-weight: bold; letter-spacing: 1px; }
-.card-desc { color: #5a3f22; font-size: 14px; line-height: 1.55; margin: 10px 0 16px; }
+.card-desc { color: #5a3f22; font-size: 14px; line-height: 1.55; margin: 10px 0 10px; }
+.card-cost {
+  margin: 0 0 16px; padding: 7px 10px; border-radius: 8px;
+  background: rgba(120, 80, 30, 0.08); border: 1px dashed rgba(120, 80, 30, 0.35);
+  color: #6a4a28; font-size: 13px; line-height: 1.5;
+}
+.card-cost b { color: #a3541f; font-size: 15px; }
+.cost-note { display: block; color: #8a6a44; font-size: 11px; margin-top: 2px; }
 .card-actions { display: flex; gap: 12px; justify-content: center; }
 </style>

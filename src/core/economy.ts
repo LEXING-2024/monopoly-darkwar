@@ -2,7 +2,7 @@
 
 import {
   BRIDGES, BRIDGE_REPAIR_DISCOUNT, BUILDING_DEFS, CLIMATE, CLIMATE_MODS, CONTIGUOUS_BONUS, EAST_BRIDGE, ENDGAME,
-  EXPLORE_COST_RATIO, RENT_RAMP_MIN, RENT_RAMP_ROUNDS, RENT_STALL_MAX, RENT_STALL_PER_ROUND, RENT_STALL_START,
+  EXPLORE_COST_RATIO, RENT_PER_ELIMINATION, RENT_ELIMINATION_MAX, RENT_RAMP_MIN, RENT_RAMP_ROUNDS, RENT_STALL_MAX, RENT_STALL_PER_ROUND, RENT_STALL_START,
   RESERVE_MULT, RESERVE_WEIGHTS, RESOURCES, SEASONS, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from './config'
 import { ownsTech } from './market'
@@ -10,11 +10,20 @@ import type { GameApi, Player, Reserve, ResourceType, Tile } from './types'
 
 /** 全局租金倍率 */
 export function globalRentMod(game: GameApi): number {
+  const s = game.state
   let m = 1
-  for (const mod of game.state.rentMods) if (mod.turns > 0) m *= mod.factor
-  if (game.state.endgame) m *= ENDGAME.rentMod
+  for (const mod of s.rentMods) if (mod.turns > 0) m *= mod.factor
+  if (s.endgame) {
+    const alive = s.players.filter(p => p.alive).length
+    // 3 人压力期用较轻加成，2 人决战才用完整的 ×1.5——避免首破产后一步跨进终局屠场
+    m *= alive <= 2 ? ENDGAME.rentMod : ENDGAME.pressureRentMod
+  }
+  // 淘汰加速：每出局一人，全场租金再涨一档。首破产后剩余玩家往往靠低租金苟活，
+  // 实测首破产到终局占 55% 的行动数——用租金压力把这段垃圾时间压短。
+  const eliminated = s.players.length - s.players.filter(p => p.alive).length
+  if (eliminated > 0) m *= 1 + Math.min(RENT_ELIMINATION_MAX, eliminated * RENT_PER_ELIMINATION)
   // 景气修正：繁荣租金 +10%、衰退 -10%（危机走过路费专项）
-  m *= CLIMATE_MODS[game.state.climate].rent
+  m *= CLIMATE_MODS[s.climate].rent
   // 开局租金缓启动：前 N 轮从 60% 线性恢复到 100%
   const r = game.state.totalRound
   if (r < RENT_RAMP_ROUNDS) m *= RENT_RAMP_MIN + (1 - RENT_RAMP_MIN) * (r / RENT_RAMP_ROUNDS)

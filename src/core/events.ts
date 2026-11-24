@@ -1,7 +1,7 @@
 // ============ 事件系统：反垄断 / 事件链 / 季节事件（文档 6.3、9.3、10） ============
 
 import {
-  ANTITRUST, BRIDGES, EAST_BRIDGE, SEASON_EVENTS, TERRAIN_RESOURCE, WEST_BRIDGE,
+  ANTITRUST, BRIDGE_MONOPOLY_MIN_LEVELS, BRIDGES, EAST_BRIDGE, monopolyTerrainRatio, SEASON_EVENTS, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from './config'
 import { repairCost } from './buildings'
 import { keyBreakupTile, totalValue as playerTotalValue } from './economy'
@@ -15,6 +15,7 @@ export interface MonopolyInfo {
   singleRatio: number   // 单类地形最高占比
   globalRatio: number   // 全局地形占比
   bridges: number       // 拥有桥梁数
+  bridgeLevels: number  // 所拥桥梁等级之和（0 级桥不算有效垄断）
 }
 
 /** 垄断统计：单类地形占比 / 全局地形占比 / 双桥 */
@@ -31,15 +32,39 @@ export function monopolyInfo(game: GameApi, playerId: number): MonopolyInfo {
   const ownedTotal = Object.values(owned).reduce((a, b) => a + b, 0)
   const totalAll = Object.values(total).reduce((a, b) => a + b, 0)
   const bridges = s.tiles.filter(t => t.type === 'bridge' && t.owner === playerId).length
-  return { singleRatio, globalRatio: totalAll > 0 ? ownedTotal / totalAll : 0, bridges }
+  const bridgeLevels = s.tiles
+    .filter(t => t.type === 'bridge' && t.owner === playerId)
+    .reduce((sum, t) => sum + (t.bridgeLevel ?? 0), 0)
+  return { singleRatio, globalRatio: totalAll > 0 ? ownedTotal / totalAll : 0, bridges, bridgeLevels }
 }
 
-/** 垄断线：单类地形 ≥70%、全局地形 ≥50%、或拥有双桥 */
+/** 垄断线：单类地形达到动态门槛（4 人 50%…8 人 70%）、全局地形 ≥50%、
+ *  或双桥且两桥总等级 ≥2（0 级桥只是占位，不构成交通垄断）。 */
 export function isMonopoly(game: GameApi, playerId: number): boolean {
   const m = monopolyInfo(game, playerId)
-  return m.singleRatio >= ANTITRUST.terrainRatio ||
+  return m.singleRatio >= monopolyTerrainRatio(game.state.players.length) ||
     m.globalRatio >= ANTITRUST.globalRatio ||
-    m.bridges >= 2
+    (m.bridges >= 2 && m.bridgeLevels >= BRIDGE_MONOPOLY_MIN_LEVELS)
+}
+
+/** 超出垄断线的程度（0 起）：用于举报成功率与罚款随"垄断得多狠"缩放 */
+export function monopolyOverage(game: GameApi, playerId: number): number {
+  const m = monopolyInfo(game, playerId)
+  const terrainThreshold = monopolyTerrainRatio(game.state.players.length)
+  const singleOver = m.singleRatio / Math.max(0.01, terrainThreshold) - 1
+  const globalOver = m.globalRatio / Math.max(0.01, ANTITRUST.globalRatio) - 1
+  const bridgeOver = m.bridges >= 2 && m.bridgeLevels >= BRIDGE_MONOPOLY_MIN_LEVELS ? 0.15 : 0
+  return Math.max(0, Math.min(0.6, Math.max(singleOver, globalOver, bridgeOver)))
+}
+
+/** 举报成功率（UI 展示与结算共用）：基础人数概率 + 超线加成 - 目标游说 */
+export function reportOdds(game: GameApi, targetId: number, joiners: number): number {
+  const target = game.state.players[targetId]
+  let prob = ANTITRUST.reportProb[Math.min(joiners, 3)]
+  prob += monopolyOverage(game, targetId) * ANTITRUST.probOverageBonus
+  const lobbyLvl = Math.min(3, Math.max(0, -Math.round(target.status.antitrustMod / 0.1)))
+  if (lobbyLvl > 0) prob = Math.max(0, prob - lobbyLvl * 0.1)
+  return Math.max(0, Math.min(0.95, prob))
 }
 
 /** 可被举报的垄断目标（含失败保护期） */
@@ -51,9 +76,9 @@ export function monopolyTargets(game: GameApi, reporterId: number): number[] {
 }
 
 /**
- * 玩家主动发起反垄断举报（可联合）：
- * 发起人缴费 300，其余 AI 有概率加入联合（各自缴费 300）；
- * 成功率按人数 40%/70%/90%，减去目标的游说等级；
+ * 玩家主动发起反垄断举报（可联合，人类也会收到加入邀请）：
+ * 发起人缴费 300，其余存活玩家按各自意愿加入（各自缴费 300）；
+ * 成功率按人数 40%/70%/90%，叠加"超出垄断线"加成，再减去目标的游说等级；
  * 失败 → 目标 2 轮内不可再被举报；成功 → 罚款 15% / 强制拍卖一块 / 产出减半 2 轮。
  */
 export async function reportMonopoly(game: GameApi, reporterId: number, targetId: number): Promise<boolean> {
@@ -74,14 +99,14 @@ export async function reportMonopoly(game: GameApi, reporterId: number, targetId
     return false
   }
 
-  // 发起人缴费，其余 AI 由大脑决策是否加入联合（人类不参与）
+  // 发起人缴费，其余存活玩家（含人类）都会被询问是否加入联合
   reporter.cash -= ANTITRUST.reportCost
   reporter.stats.spent += ANTITRUST.reportCost
   const joiners: number[] = [reporterId]
   for (const p of s.players) {
-    if (p.id === reporterId || p.id === targetId || !p.alive || !p.isAI) continue
+    if (p.id === reporterId || p.id === targetId || !p.alive) continue
     if (p.cash < ANTITRUST.reportCost) continue
-    const currentProb = ANTITRUST.reportProb[Math.min(joiners.length, 3)]
+    const currentProb = reportOdds(game, targetId, joiners.length)
     const ans = await game.prompt<{ join: boolean }>({
       type: 'join-report', player: p.id, target: targetId,
       cost: ANTITRUST.reportCost, currentProb,
@@ -95,9 +120,7 @@ export async function reportMonopoly(game: GameApi, reporterId: number, targetId
   // 目标记住每一个举报自己的人（报复依据）
   for (const id of joiners) remember(s, targetId, id, 'report')
   const n = joiners.length
-  let prob = ANTITRUST.reportProb[Math.min(n, 3)]
-  const lobbyLvl = Math.min(3, Math.max(0, -Math.round(target.status.antitrustMod / 0.1)))
-  if (lobbyLvl > 0) prob = Math.max(0, prob - lobbyLvl * 0.1)
+  const prob = reportOdds(game, targetId, n)
   game.log(`反垄断举报：${joiners.map(id => `「${s.players[id].name}」`).join('、')} 联合举报「${target.name}」（${n} 人，成功率 ${Math.round(prob * 100)}%）`)
   game.sfx('click')
 
@@ -125,7 +148,9 @@ async function applyPunishment(game: GameApi, targetId: number, joiners: number[
   const totalValue = mono.reduce((a, t) => a + t.price, 0)
   switch (outcome) {
     case 'fine': {
-      const fine = Math.round((totalValue * ANTITRUST.fineRatio) / 10) * 10
+      // 罚款随超线幅度上浮：垄断越狠罚得越重（基线 15%，最高 35%）
+      const fineRatio = Math.min(0.35, ANTITRUST.fineRatio + monopolyOverage(game, targetId) * ANTITRUST.fineOverageBonus)
+      const fine = Math.round((totalValue * fineRatio) / 10) * 10
       await game.pay(targetId, fine, null, '反垄断罚款')
       // 举报奖金：罚款的 25%（ANTITRUST.bountyRatio）由举报人平分
       const bounty = Math.round((fine * ANTITRUST.bountyRatio) / joiners.length / 10) * 10

@@ -82,8 +82,12 @@ export function incomeEstimate(state: GameState, playerId: number): number {
   return income
 }
 
-/** 意图推断：是否在冲刺某地形垄断（单地形占比 ≥60%） */
-export function monopolyRushInfo(state: GameState, playerId: number): { rushing: boolean; terrain: Terrain | null } {
+/** 意图推断：是否在冲刺某地形垄断（默认单地形占比 ≥60%，可按难度调整阈值） */
+export function monopolyRushInfo(
+  state: GameState,
+  playerId: number,
+  threshold = 0.6,
+): { rushing: boolean; terrain: Terrain | null } {
   const owned: Partial<Record<Terrain, number>> = {}
   const total: Partial<Record<Terrain, number>> = {}
   for (const t of state.tiles) {
@@ -97,5 +101,5 @@ export function monopolyRushInfo(state: GameState, playerId: number): { rushing:
     const r = (owned[k] ?? 0) / (total[k] ?? 1)
     if (r > best) { best = r; terrain = k }
   }
-  return { rushing: best >= 0.6, terrain }
+  return { rushing: best >= threshold, terrain }
 }

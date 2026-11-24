@@ -2,12 +2,12 @@
 
 import {
   BRIDGES, BRIDGE_PRICING, CLIMATE, CLIMATE_MODS, CLIMATE_NAMES, EAST_BRIDGE, INITIAL_CASH, LOG_CAP,
-  MARKET_MANIPULATION, MAX_TURNS, MONOPOLY_WIN,
+  MARKET_MANIPULATION, MAX_TURNS, monopolyTerrainRatio,
   PLAYER_COLORS, PLAYER_SHAPES, RESOURCES, SEASON_CARD_WEIGHT, SEASON_LEN_MAX, TERRAIN_RESOURCE,
   SEASON_LEN_MIN, SEASON_ORDER, SEASONS, START_BONUS, START_REPAIR_DISCOUNT,
   TILE_COUNT, TURN_OP_LIMITS, WEST_BRIDGE,
 } from './config'
-import { CHANCE_DECK, FATE_DECK, type CardDef } from './cards'
+import { CARD_BY_ID, CHANCE_DECK, FATE_DECK, cardCost, cardCostNote, isPaidCard, type CardDef } from './cards'
 import { RNG } from './rng'
 import { createTiles, LAYOUT, SEA_POINTS, nearestCoast } from './map'
 import { updateMarket, sellUnitPrice, settleMarketPressure, recordSale, applyPriceShock } from './market'
@@ -53,8 +53,6 @@ export class Game implements GameApi {
 
   private listeners = new Map<string, Set<Listener>>()
   private resolver: ((v: any) => void) | null = null
-  private fateDeck: CardDef[] = []
-  private chanceDeck: CardDef[] = []
   private stopped = false
   private pendingSave = false
 
@@ -201,69 +199,85 @@ export class Game implements GameApi {
 
   // ---------- 卡牌 ----------
 
-  private drawCard(cat: 'fate' | 'chance', playerId: number): CardDef {
+  /** 抽一张卡：牌堆是 state 里的 id 数组；可用性/季节/免费过滤都在抽取池上做。
+   *  返回 null 表示当前没有符合条件的卡（调用方需自行兜底）。 */
+  private drawCard(cat: 'fate' | 'chance', playerId: number, opts: { freeOnly?: boolean } = {}): CardDef | null {
     const s = this.state
-    let deck = cat === 'fate' ? this.fateDeck : this.chanceDeck
-    if (deck.length === 0) {
+    const deck = cat === 'fate' ? s.fateDeck : s.chanceDeck
+    let ids = deck
+    if (ids.length === 0) {
       const fresh = cat === 'fate' ? FATE_DECK : CHANCE_DECK
-      deck = this.rng.shuffle(fresh)
-      if (cat === 'fate') this.fateDeck = deck
-      else this.chanceDeck = deck
+      ids = this.rng.shuffle(fresh.map(c => c.id))
+      if (cat === 'fate') s.fateDeck = ids
+      else s.chanceDeck = ids
     }
-    // 过滤当前无效的卡（如无桥可升级、保护期内台风警报）：不进入本次抽取池
-    const eligible = deck.map((c, i) => ({ c, i }))
-      .filter(({ c }) => !c.available || c.available(this, playerId))
-    // 兜底：若整副牌都不可用（极端情况），退回全牌堆抽取，避免死循环
-    const pool = eligible.length ? eligible : deck.map((c, i) => ({ c, i }))
+    // 过滤当前无效的卡（如无桥可升级、保护期内灾害）、非当季灾害卡、以及 lucky 的"只要免费卡"
+    const eligible = ids
+      .map((id, i) => ({ card: CARD_BY_ID.get(id), i }))
+      .filter((x): x is { card: CardDef; i: number } => {
+        const c = x.card
+        if (!c) return false
+        if (c.available && !c.available(this, playerId)) return false
+        if (c.disaster && c.seasons && !c.seasons.includes(s.season)) return false
+        if (opts.freeOnly && isPaidCard(c.id)) return false
+        return true
+      })
+    if (!eligible.length) {
+      s.deckLeft[cat] = ids.length
+      return null
+    }
     // 季节加权（文档 5.4）
-    const weights = pool.map(({ c }) => (c.seasons?.includes(s.season) ? SEASON_CARD_WEIGHT : 1))
-    const pick = pool[this.rng.weighted(weights)]
+    const weights = eligible.map(({ card }) => (card.seasons?.includes(s.season) ? SEASON_CARD_WEIGHT : 1))
+    const pick = eligible[this.rng.weighted(weights)]
     // 从牌堆移除抽中的那张（按原索引，因为过滤可能跳过若干张）
-    deck.splice(pick.i, 1)
-    s.deckLeft[cat] = deck.length
-    return pick.c
+    ids.splice(pick.i, 1)
+    s.deckLeft[cat] = ids.length
+    return pick.card
   }
 
   async drawFate(playerId: number): Promise<void> {
     const card = this.drawCard('fate', playerId)
+    if (!card) { this.log('命运牌堆暂时没有可用的卡', playerId); return }
     const p = this.state.players[playerId]
     this.log(`「${p.name}」抽到命运卡：${card.name}`, playerId)
     this.sfx('card')
+    const base = cardCost(this, card.id)
     await this.prompt({
       type: 'card', cardId: card.id, category: 'fate',
       name: card.name, desc: card.desc, icon: card.icon,
       canDecline: false, player: playerId,
+      cost: base || undefined, costNote: cardCostNote(card.id, base) || undefined,
     })
     await card.effect(this, playerId)
     // 垄断胜利改为轮末统一判定（需连续维持若干轮），此处不再即时检查
     this.markChanged()
   }
 
-  async drawChance(playerId: number, forced = false): Promise<void> {
-    const card = this.drawCard('chance', playerId)
+  async drawChance(playerId: number, forced = false, opts: { freeOnly?: boolean } = {}): Promise<boolean> {
+    const card = this.drawCard('chance', playerId, opts)
+    if (!card) { this.log('机会牌堆暂时没有可用的卡', playerId); return false }
     const p = this.state.players[playerId]
     this.log(`「${p.name}」抽到机会卡：${card.name}`, playerId)
     this.sfx('card')
+    const base = cardCost(this, card.id)
+    const prompt = {
+      type: 'card' as const, cardId: card.id, category: 'chance' as const,
+      name: card.name, desc: card.desc, icon: card.icon, player: playerId,
+      cost: base || undefined, costNote: cardCostNote(card.id, base) || undefined,
+    }
     if (!forced) {
-      const res = await this.prompt<{ accept: boolean }>({
-        type: 'card', cardId: card.id, category: 'chance',
-        name: card.name, desc: card.desc, icon: card.icon,
-        canDecline: true, player: playerId,
-      })
+      const res = await this.prompt<{ accept: boolean }>({ ...prompt, canDecline: true })
       if (!res?.accept) {
         this.log(`「${p.name}」放弃了机会卡`, playerId)
-        return
+        return false
       }
     } else {
-      await this.prompt({
-        type: 'card', cardId: card.id, category: 'chance',
-        name: card.name, desc: card.desc, icon: card.icon,
-        canDecline: false, player: playerId,
-      })
+      await this.prompt({ ...prompt, canDecline: false })
     }
     await card.effect(this, playerId)
     // 垄断胜利改为轮末统一判定，此处不再即时检查
     this.markChanged()
+    return true
   }
 
   // ---------- 拍卖 ----------
@@ -541,7 +555,7 @@ export class Game implements GameApi {
     const p = s.players[s.currentPlayer]
     if (!p?.alive || s.phase !== 'action') return false
     if (s.ops.market <= 0) return false
-    if (this.resourceShare(p.id, res) < MONOPOLY_WIN.terrainRatio) return false
+    if (this.resourceShare(p.id, res) < monopolyTerrainRatio(s.players.length)) return false
     if (p.cash < MARKET_MANIPULATION.dumpCost) return false
     // 同一资源已有自己的断供：不重复叠加
     if (s.supplyBlocks.some(b => b.resource === res && b.playerId === p.id && b.turns > 0)) return false
@@ -637,6 +651,9 @@ export class Game implements GameApi {
       turn: 0,
       round: 0,
       totalRound: 0,
+      rngState: this.rng.getState(),
+      fateDeck: this.rng.shuffle(FATE_DECK.map(c => c.id)),
+      chanceDeck: this.rng.shuffle(CHANCE_DECK.map(c => c.id)),
       // 开局季节随机（四季任一），此后按 春→夏→秋→冬 顺序循环
       season: SEASON_ORDER[this.rng.int(0, SEASON_ORDER.length - 1)],
       seasonTurn: 0,
@@ -693,8 +710,6 @@ export class Game implements GameApi {
     // 总财富基线：开局资产（首轮涨跌相对开局比较，避免从 0 起算出现虚假暴涨）
     s.totalWealth = this.totalWealthNow()
     s.totalWealthPrev = s.totalWealth
-    this.fateDeck = this.rng.shuffle(FATE_DECK)
-    this.chanceDeck = this.rng.shuffle(CHANCE_DECK)
 
     this.log(`游戏开始！${s.players.map(p => `「${p.name}」${p.isAI ? '(AI)' : '(玩家)'}`).join('、')}`)
     this.emit('game-start')
@@ -759,6 +774,7 @@ export class Game implements GameApi {
         // 存档请求：在本回合边界落盘（下一行动者回合开始前）
         if (this.pendingSave && !this.stopped) {
           this.pendingSave = false
+          s.rngState = this.rng.getState()   // 落盘前记录随机源状态，读档后序列可续
           s.currentPlayer = this.nextPlayerAfter(id)
           s.phase = 'spin'
           s.wheelResult = null
@@ -766,9 +782,19 @@ export class Game implements GameApi {
         }
       }
 
-      // 一轮结束：行动顺序回到本局开局顺序。若按「上轮末位玩家」作为下一轮起点
-      // （读档恢复用的轮转逻辑），会造成上轮最后行动的玩家连续行动两次——末尾连续两轮都是自己
-      s.currentPlayer = s.turnOrder[0] ?? 0
+      // 一轮结束：按总轮数轮换先手（旧实现永远让 turnOrder[0] 先手，
+      // 4 人局首手胜率显著高于期望）。轮换只在"每轮第一个行动者"上做，
+      // 轮内仍严格按开局决定的行动顺序，不破坏顺序公平。
+      const seats = s.turnOrder.length
+      if (seats > 0) {
+        const startSeat = s.totalRound % seats
+        let first = s.turnOrder[startSeat]
+        for (let k = 0; k < seats; k++) {
+          const cand = s.turnOrder[(startSeat + k) % seats]
+          if (s.players[cand]?.alive) { first = cand; break }
+        }
+        s.currentPlayer = first
+      }
 
       // 轮末：更新垄断状态（不判胜——垄断是压制手段，胜负仍靠淘汰）
       if (s.winner === null && !this.stopped) updateMonopolyStatus(this)
@@ -927,6 +953,9 @@ export class Game implements GameApi {
     // 先初始化主随机源：旧存档缺少 aiBrains 时，下方兜底 createBrains 需要 this.rng
     this.rng = new RNG()
     const saved = JSON.parse(json) as GameState
+    // 随机源状态：新存档带 rngState，读档后从同一序列继续；旧存档只能以新种子继续并提示不保证复现
+    const savedRngState = Number.isFinite(saved.rngState) ? saved.rngState : null
+    if (savedRngState !== null) this.rng = RNG.fromState(savedRngState)
     // 旧版本存档缺字段兜底
     saved.round = saved.round ?? 0
     saved.totalRound = saved.totalRound ?? saved.round ?? 0
@@ -1010,9 +1039,22 @@ export class Game implements GameApi {
     this.state.started = true
     this.state.phase = 'spin'
     this.state.wheelResult = null
-    this.rng = new RNG()
-    this.fateDeck = this.rng.shuffle(FATE_DECK)
-    this.chanceDeck = this.rng.shuffle(CHANCE_DECK)
+    // 牌堆：新存档保存的是 id 顺序，读档不重洗；旧存档没有牌堆则补一副新牌
+    const validIds = new Set([...FATE_DECK, ...CHANCE_DECK].map(c => c.id))
+    if (!Array.isArray(this.state.fateDeck) || this.state.fateDeck.length === 0) {
+      this.state.fateDeck = this.rng.shuffle(FATE_DECK.map(c => c.id))
+    } else {
+      this.state.fateDeck = this.state.fateDeck.filter(id => validIds.has(id))
+      if (this.state.fateDeck.length === 0) this.state.fateDeck = this.rng.shuffle(FATE_DECK.map(c => c.id))
+    }
+    if (!Array.isArray(this.state.chanceDeck) || this.state.chanceDeck.length === 0) {
+      this.state.chanceDeck = this.rng.shuffle(CHANCE_DECK.map(c => c.id))
+    } else {
+      this.state.chanceDeck = this.state.chanceDeck.filter(id => validIds.has(id))
+      if (this.state.chanceDeck.length === 0) this.state.chanceDeck = this.rng.shuffle(CHANCE_DECK.map(c => c.id))
+    }
+    this.state.deckLeft = { fate: this.state.fateDeck.length, chance: this.state.chanceDeck.length }
+    this.state.rngState = this.rng.getState()
     this.emit('game-start')
     this.markChanged()
     void this.runMainLoop().catch(e => {

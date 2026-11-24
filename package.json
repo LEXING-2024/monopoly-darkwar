@@ -1,13 +1,14 @@
 {
   "name": "monopoly",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/test.ts",
     "sim": "tsx scripts/simulate.ts",
     "sim:gate": "tsx scripts/sim-gate.ts 500"
   },

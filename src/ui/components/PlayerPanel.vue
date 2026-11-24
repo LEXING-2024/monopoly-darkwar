@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { store } from '../store'
-import { ANTITRUST, MONOPOLY_WIN, RESOURCES, RESOURCE_ORDER } from '../../core/config'
+import { monopolyTerrainRatio, RESOURCES, RESOURCE_ORDER } from '../../core/config'
 import { contiguousRun } from '../../core/economy'
 import type { ResourceType, Terrain } from '../../core/types'
 import Icon from './Icon.vue'
@@ -77,6 +77,8 @@ const contiguousMap = computed(() => {
 })
 const hold = computed(() => s.value?.monopolyHold ?? null)
 const isCharging = (pid: number): boolean => hold.value?.playerId === pid
+/** 垄断线按人数缩放：4 人局 50%…8 人局 70%（与核心判定同一口径） */
+const monoLine = computed(() => monopolyTerrainRatio(s.value?.players.length ?? 4))
 </script>
 
 <template>
@@ -99,7 +101,7 @@ const isCharging = (pid: number): boolean => hold.value?.playerId === pid
     <div class="badges" v-if="human.status.rentFree > 0 || human.status.insuredTurns > 0 || human.status.antitrustTurns > 0 || human.status.floodImmune > 0 || human.status.moveMod !== 0">
       <span v-if="human.status.rentFree > 0" class="badge"><Icon name="shield" :size="11" /> 免过路费</span>
       <span v-if="human.status.insuredTurns > 0" class="badge"><Icon name="shield" :size="11" /> 保险 {{ human.status.insuredTurns }}</span>
-      <span v-if="human.status.antitrustTurns > 0" class="badge"><Icon name="briefcase" :size="11" /> 游说 -{{ (-human.status.antitrustMod * 100).toFixed(0) }}%</span>
+      <span v-if="human.status.antitrustTurns > 0" class="badge"><Icon name="briefcase" :size="11" /> 游说 -{{ Math.min(30, Math.round(-human.status.antitrustMod * 100)) }}%</span>
       <span v-if="human.status.floodImmune > 0" class="badge"><Icon name="wave" :size="11" /> 堤坝</span>
       <span v-if="human.status.moveMod !== 0" class="badge"><Icon name="dice" :size="11" /> 步数{{ human.status.moveMod > 0 ? '+' : '' }}{{ human.status.moveMod }}</span>
     </div>
@@ -120,14 +122,14 @@ const isCharging = (pid: number): boolean => hold.value?.playerId === pid
             v-if="p.alive && monopolyProgress.get(p.id)"
             class="mono-bar"
             :class="{
-              warn: monopolyProgress.get(p.id)!.ratio >= ANTITRUST.terrainRatio,
-              hot: monopolyProgress.get(p.id)!.ratio >= MONOPOLY_WIN.terrainRatio,
+              warn: monopolyProgress.get(p.id)!.ratio >= monoLine * 0.9,
+              hot: monopolyProgress.get(p.id)!.ratio >= monoLine,
               charging: isCharging(p.id),
             }"
-            :title="`${TERRAIN_LABEL[monopolyProgress.get(p.id)!.terrain]}占比 ${Math.round(monopolyProgress.get(p.id)!.ratio * 100)}%（垄断线 ${MONOPOLY_WIN.terrainRatio * 100}%）${isCharging(p.id) && hold ? ` · 已垄断 ${hold.rounds} 轮，可断供/抬价压制，也可被举报` : ''}`"
+            :title="`${TERRAIN_LABEL[monopolyProgress.get(p.id)!.terrain]}占比 ${Math.round(monopolyProgress.get(p.id)!.ratio * 100)}%（垄断线 ${Math.round(monoLine * 100)}%）${isCharging(p.id) && hold ? ` · 已垄断 ${hold.rounds} 轮，可断供/抬价压制，也可被举报` : ''}`"
           >
             <i class="mono-fill" :style="{ width: `${Math.min(100, monopolyProgress.get(p.id)!.ratio * 100)}%` }" />
-            <b class="mono-mark" :style="{ left: `${MONOPOLY_WIN.terrainRatio * 100}%` }" />
+            <b class="mono-mark" :style="{ left: `${monoLine * 100}%` }" />
             <em v-if="isCharging(p.id) && hold" class="mono-count">垄断{{ hold.rounds }}</em>
           </span>
         </span>

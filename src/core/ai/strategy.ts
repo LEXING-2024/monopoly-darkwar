@@ -26,7 +26,10 @@ export function updateStrategy(game: GameApi, brain: AiBrain, p: Player): void {
   const s = game.state
   const phase = gamePhase(game)
   const rank = rankOf(game, p.id)
-  const rush = monopolyRushInfo(s, p.id)
+  // 难度行为：monopolyFocus 越高越早开始冲刺（阈值约 0.50~0.68），低难度更晚
+  const focus = brain.profile.monopolyFocus ?? 0.6
+  const rushThreshold = Math.min(0.72, Math.max(0.45, 0.6 + (0.6 - focus) * 0.25))
+  const rush = monopolyRushInfo(s, p.id, rushThreshold)
 
   let next: AiBrain['strategy'] = brain.strategy
   // 垄断冲刺：某地形已占 ≥50% 且中期以后 → 全力冲刺该地形
@@ -57,6 +60,8 @@ function cashSafetyQuick(s: GameApi['state'], playerId: number): number {
 /** 垄断冲刺的目标地形 */
 export function rushTarget(brain: AiBrain, s: GameApi['state'], playerId: number): Terrain | null {
   if (brain.strategy !== 'monopoly') return null
-  const info = monopolyRushInfo(s, playerId)
+  const focus = brain.profile.monopolyFocus ?? 0.6
+  const threshold = Math.min(0.72, Math.max(0.45, 0.6 + (0.6 - focus) * 0.25))
+  const info = monopolyRushInfo(s, playerId, threshold)
   return info.terrain
 }

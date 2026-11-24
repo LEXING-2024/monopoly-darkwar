@@ -1,6 +1,6 @@
 // ============ 破产与终局（文档 2.3） ============
 
-import { ENDGAME, MONOPOLY_WIN, RESOURCES } from './config'
+import { ENDGAME, monopolyTerrainRatio, RESOURCES } from './config'
 import type { GameApi, Player, ResourceType, Terrain } from './types'
 
 /**
@@ -50,6 +50,8 @@ export async function declareBankruptcy(game: GameApi, playerId: number, credito
   p.stats.timesBankrupt++
   s.bankruptOrder.push(playerId)
   if (s.firstBankruptTurn === null) s.firstBankruptTurn = s.turn
+  // 任何破产都重置"无人破产"倒计时：危机只惩罚真正的僵局
+  s.roundsNoBankruptcy = 0
 
   let cashToCreditor = 0
   // 建筑半价折现
@@ -98,27 +100,41 @@ export async function declareBankruptcy(game: GameApi, playerId: number, credito
     s.endReason = 'last-standing'
     game.log(`「${alive[0].name}」淘汰了所有对手，成为最后的生还者！`, alive[0].id)
   }
-  if (alive.length === 2 && !s.endgame && s.winner === null) {
+  if (alive.length <= ENDGAME.pressureAlive && alive.length >= 2 && !s.endgame && s.winner === null) {
     s.endgame = true
     s.roundsNoBankruptcy = 0
     // 银行收回所有无主地块
     for (const t of s.tiles) {
       if (t.owner === null && (t.type === 'terrain' || t.type === 'bridge')) t.seized = true
     }
-    // 终局租金 +50% 由 globalRentMod 依据 endgame 标记统一施加。
+    // 租金倍率统一由 globalRentMod 按存活人数施加：≤2 人 ×1.5，3 人 ×1.0（压力期不叠租金）。
     // 旧实现又往 rentMods 里塞了一条 ×1.5，实际变成 ×2.25；且 Infinity 存档后会变成 null，
     // 读档后终局加成神秘消失——同一局读档前后强度不一致。
-    await game.notice('终局对决', '仅剩 2 名玩家！无主地块被银行收回，所有过路费 +50%，资源价格波动加剧！', '⚔️')
+    const rentMod = alive.length <= 2 ? ENDGAME.rentMod : ENDGAME.pressureRentMod
+    const endgameText = rentMod > 1
+      ? `仅剩 ${alive.length} 名玩家！无主地块被银行收回，所有过路费 ×${rentMod}，资源价格波动加剧！`
+      : `仅剩 ${alive.length} 名玩家，进入终局压力期！无主地块被银行收回，连续 ${ENDGAME.crisisTurns} 轮无人破产将触发经济危机。`
+    await game.notice('终局对决', endgameText, '⚔️')
+  }
+
+  // 人类淘汰：单独事件交给 UI 弹出结算/观战选择（不阻塞游戏主循环）
+  if (!p.isAI) {
+    game.emit('human-eliminated', {
+      playerId,
+      rank: s.bankruptOrder.length,
+      assets: Math.round(cashToCreditor),
+      reason,
+    })
   }
   game.markChanged()
 }
 
-/** 终局经济危机（连续 5 回合无人破产，双方资产缩水 30%） */
+/** 终局经济危机（连续 6 轮无人破产，存活玩家资产缩水 30%） */
 export async function checkCrisis(game: GameApi): Promise<void> {
   const s = game.state
   if (s.winner !== null) return
   const alive = s.players.filter(p => p.alive)
-  if (!s.endgame || alive.length !== 2) return
+  if (!s.endgame || alive.length < 2 || alive.length > ENDGAME.pressureAlive) return
   s.roundsNoBankruptcy++
   if (s.roundsNoBankruptcy >= ENDGAME.crisisTurns) {
     s.roundsNoBankruptcy = 0
@@ -142,7 +158,7 @@ export async function checkCrisis(game: GameApi): Promise<void> {
       }
       game.log(`经济危机！「${p.name}」的资产缩水 30%（现金 -${lostCash}${lostBuildings ? `，${lostBuildings} 座建筑受损` : ''}）`, p.id)
     }
-    await game.notice('经济危机', '连续 5 回合无人破产，双方资产按比例缩水 30%，直到分出胜负！', '📉')
+    await game.notice('经济危机', `连续 ${ENDGAME.crisisTurns} 轮无人破产，存活玩家资产按比例缩水 30%，直到分出胜负！`, '📉')
   }
 }
 
@@ -159,6 +175,8 @@ export function updateMonopolyStatus(game: GameApi): void {
   const terrains: Terrain[] = ['forest', 'plateau', 'desert', 'coast']
 
   // 找出当前占比最高且越过"垄断线"的玩家+地形（每人只取其最强的那类地形）
+  // 门槛按存活人数缩放：4 人局 50%…8 人局 70%，避免小桌几乎无法触发垄断
+  const threshold = monopolyTerrainRatio(s.players.length)
   let best: { playerId: number; terrain: Terrain; ratio: number } | null = null
   for (const p of s.players) {
     if (!p.alive) continue
@@ -167,7 +185,7 @@ export function updateMonopolyStatus(game: GameApi): void {
       if (!all.length) continue
       const owned = all.filter(t => t.owner === p.id).length
       const ratio = owned / all.length
-      if (ratio >= MONOPOLY_WIN.terrainRatio && (!best || ratio > best.ratio)) {
+      if (ratio >= threshold && (!best || ratio > best.ratio)) {
         best = { playerId: p.id, terrain, ratio }
       }
     }

@@ -21,6 +21,9 @@ import BuildingModal from './ui/components/BuildingModal.vue'
 import TileModal from './ui/components/TileModal.vue'
 import LoadingOverlay from './ui/components/LoadingOverlay.vue'
 import NoMoneyModal from './ui/components/NoMoneyModal.vue'
+import JoinReportModal from './ui/components/JoinReportModal.vue'
+import EliminatedModal from './ui/components/EliminatedModal.vue'
+import OnboardingModal from './ui/components/OnboardingModal.vue'
 import Icon from './ui/components/Icon.vue'
 
 const inGame = computed(() => !!store.state?.started)
@@ -86,12 +89,15 @@ onBeforeUnmount(() => {
         v-else-if="prompt && ['choose-resource', 'choose-tile', 'choose-terrain'].includes(prompt.type)"
         :prompt="prompt"
       />
+      <JoinReportModal v-else-if="prompt?.type === 'join-report'" :prompt="prompt" />
       <SimpleModals
         v-else-if="prompt && ['notice', 'pay-or-lose', 'donate', 'sell-spec'].includes(prompt.type)"
         :prompt="prompt"
       />
 
       <GameOverModal v-if="store.state?.phase === 'gameover' && !prompt" />
+      <EliminatedModal v-if="store.eliminated && store.state?.phase !== 'gameover'" />
+      <OnboardingModal v-if="!store.loading && store.state?.totalRound <= 1" />
     </template>
     <StartScreen v-else @show-help="showHelp = true" />
     <HelpModal v-if="showHelp" @close="showHelp = false" />

@@ -3,8 +3,8 @@
 // 叠加 M3 修复：走 sellResources API、修桥半价、dam/breakwater/office 建造、威胁排序举报、评分选勘探/升级目标
 
 import {
-  BRIDGES, BRIDGE_PRICING, BUILDINGS, BUILDING_DEFS, EAST_BRIDGE, FLOOD_TILES, MARKET_MANIPULATION,
-  MONOPOLY_WIN, RESOURCES, RESOURCE_ORDER, SEASONS, TERRAIN_RESOURCE, WEST_BRIDGE,
+  AI_EVAL, BRIDGES, BRIDGE_PRICING, BUILDINGS, BUILDING_DEFS, EAST_BRIDGE, FLOOD_TILES, MARKET_MANIPULATION,
+  monopolyTerrainRatio, RESOURCES, RESOURCE_ORDER, SEASONS, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from '../config'
 import { canBuild, levelCost, repair, repairCost } from '../buildings'
 import { bridgeRepairCost, exploreCost, tileRent } from '../economy'
@@ -52,6 +52,11 @@ export async function aiAct(game: GameApi, playerId: number): Promise<void> {
   planBridgePricing(game, playerId, brain)
 
   const myTiles = s.tiles.filter(t => t.owner === playerId)
+  // 建造顺序按地块价值排序：旧实现按地图索引遍历，首个能建的地块先吃掉唯一建造配额，
+  // 常常把商业建筑/生产建筑建在低租金角落。高价值地块优先，同样配额收益更高。
+  const buildTiles = [...myTiles].sort((a, b) =>
+    tileValue(game, playerId, b) - tileValue(game, playerId, a) || b.baseRent - a.baseRent,
+  )
   const safety = cashSafetyLine(game, playerId)
 
   // 2) 建筑维护：每回合修理 ≤1 座（统一配额），仅修理受损建筑（恢复收益），花后保留安全线缓冲
@@ -82,7 +87,7 @@ export async function aiAct(game: GameApi, playerId: number): Promise<void> {
 
   // 4) 建造：生产 / 防护（含堤坝、防波堤）/ 商业（含写字楼）/ 科技，沿用旧版现金门控
   const seasonDef = SEASONS[s.season]
-  for (const t of myTiles) {
+  for (const t of buildTiles) {
     if (t.type !== 'terrain' || !p.alive) continue
     // 生产建筑
     const prodDef = BUILDINGS.find(b => b.category === 'production' && b.terrain === t.terrain)
@@ -247,10 +252,11 @@ function planMarketManipulation(game: GameApi, playerId: number, brain: AiBrain 
   if (s.ops.market <= 0 || !p.alive) return
   const safety = cashSafetyLine(game, playerId)
 
-  // 优先级 1：断供——已形成垄断（≥70%）且有人囤着该资源时，封锁销路是纯收益
+  // 优先级 1：断供——已形成垄断（按人数动态门槛）且有人囤着该资源时，封锁销路是纯收益
   //（对手只能半价卖、自己不受影响），所以不受随机概率限制，条件满足就出手。
+  const monoThreshold = monopolyTerrainRatio(s.players.length)
   const monoRes = (Object.keys(RESOURCES) as ResourceType[])
-    .filter(r => game.resourceShare(playerId, r) >= MONOPOLY_WIN.terrainRatio)
+    .filter(r => game.resourceShare(playerId, r) >= monoThreshold)
   if (monoRes.length && p.cash >= safety * 2 + MARKET_MANIPULATION.dumpCost) {
     const withVictim = monoRes.filter(r =>
       s.players.some(x => x.alive && x.id !== playerId && (x.resources[r] ?? 0) >= 5),
@@ -372,15 +378,15 @@ function exploreGain(game: GameApi, playerId: number, t: Tile): number {
   const res = TERRAIN_RESOURCE[t.terrain as Terrain]
   if (!res) return -Infinity
   // 勘探揭示储量：期望产出提升（富 1.6/普 1.0/贫 0.6，加权 ≈1.05）× 当前地形基础产出 vs 勘探费
-  const gain = RESOURCES[res].baseOutput * (1.05 - 1) * s.market[res] * 60
+  const gain = RESOURCES[res].baseOutput * (1.05 - 1) * s.market[res] * AI_EVAL.exploreHorizon
   return gain - exploreCost(t)
 }
 
 function bestUpgrade(game: GameApi, playerId: number, myTiles: Tile[]): { tile: Tile; buildingId: number; score: number } | null {
   const s = game.state
-  const h = 80   // 升级回本视野
+  const h = AI_EVAL.upgradeHorizon   // 升级回本视野
   const opponents = s.players.filter(p => p.alive && p.id !== playerId).length
-  const visits = (opponents * 6) / 72
+  const visits = (opponents * AI_EVAL.visitsPerOpponent) / 72
   let best: { tile: Tile; buildingId: number; score: number } | null = null
   for (const t of myTiles) {
     for (const b of t.buildings) {
