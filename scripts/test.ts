@@ -1,7 +1,7 @@
 // 轻量自测：不引入测试框架，直接跑关键规则断言（npm test）
 import assert from 'node:assert/strict'
 import { RNG } from '../src/core/rng'
-import { monopolyTerrainRatio, RENT_PER_ELIMINATION } from '../src/core/config'
+import { ENDGAME, monopolyTerrainRatio } from '../src/core/config'
 import { cardCost, isPaidCard, CARD_BY_ID, FATE_DECK, CHANCE_DECK } from '../src/core/cards'
 import { contiguousRun, globalRentMod } from '../src/core/economy'
 import { declareBankruptcy } from '../src/core/bankruptcy'
@@ -108,20 +108,18 @@ test('连片地块长度：连续 5 格返回 5', () => {
   assert.equal(contiguousRun(g, g.state.tiles[2]), 1)
 })
 
-// 6) 淘汰租金加速
-test('每淘汰一人租金上浮', () => {
+// 6) 终局节奏：保持原版，淘汰不叠租金、仅剩 2 人触发 ×1.5、危机 5 轮
+test('淘汰不再上浮租金，终局仅剩 2 人 ×1.5', () => {
   const g = fakeGame(4, 100000)
-  // 4 人局 1 人出局：全场上浮 RENT_PER_ELIMINATION
   g.state.players[3].alive = false
-  assert.ok(Math.abs(globalRentMod(g) - (1 + RENT_PER_ELIMINATION)) < 1e-9)
+  assert.equal(globalRentMod(g), 1)
+  g.state.players[2].alive = false
   g.state.endgame = true
-  // 4 人局出局 1 人 → 3 人压力期，使用较轻的 pressureRentMod
-  assert.ok(Math.abs(globalRentMod(g) - (1 + RENT_PER_ELIMINATION) * 1.0) < 1e-9)
-  g.state.players[2].alive = false   // 只剩 2 人 → 完整终局加成
-  assert.ok(Math.abs(globalRentMod(g) - (1 + 2 * RENT_PER_ELIMINATION) * 1.5) < 1e-9)
+  assert.equal(globalRentMod(g), 1.5)
+  assert.equal(ENDGAME.crisisTurns, 5)
 })
 
-// 7) 破产：资产移交、重置危机倒计时、人类出局事件
+// 7) 破产：资产移交、3 人仍非终局、人类出局事件
 test('破产资产移交与出局事件', async () => {
   const g = fakeGame(4, 100000) as unknown as GameApi & { events: string[] }
   g.events = []
@@ -147,9 +145,9 @@ test('破产资产移交与出局事件', async () => {
   // 折现：建筑 200 + 木材 10×100×0.5=500 + 现金 100 = 800
   assert.equal(g.state.players[1].cash, 15000 + 800)
   assert.equal(p0.cash, 0)
-  assert.equal(g.state.roundsNoBankruptcy, 0)
-  // 4 人局出局 1 人 → 存活 3 人，触发终局压力
-  assert.equal(g.state.endgame, true)
+  assert.equal(g.state.roundsNoBankruptcy, 2)
+  // 4 人局出局 1 人 → 存活 3 人，尚未进入终局
+  assert.equal(g.state.endgame, false)
   assert.ok(g.events.includes('bankrupt'))
   assert.ok(g.events.includes('human-eliminated'))
 })

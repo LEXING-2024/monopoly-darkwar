@@ -82,9 +82,9 @@ const totalPlayers = computed(() => store.state?.players.length ?? 4)
           <h4>❖ 破产与终局</h4>
           <p>
             <b>破产</b>：付不起钱时自动半价变卖资产（建筑折现、资源变卖），仍不足则出局，剩余资产移交债权人（无债权人则充公）。<br />
-            <b>终局</b>（存活 ≤{{ ENDGAME.pressureAlive }} 人）：无主地块被银行收回，经济危机倒计时启动；仅剩 2 人时所有租金与过路费 <b>×1.5</b>，市场波动加剧（每轮 ±8%）。<br />
-            <b>经济危机</b>：终局后连续 {{ ENDGAME.crisisTurns }} 轮无人破产，存活玩家现金与资源 -30%，建筑各有 30% 概率降级——逼出胜负。<br />
-            <b>反僵持</b>：从第 {{ RENT_STALL_START }} 轮起，所有租金每轮 +{{ (RENT_STALL_PER_ROUND * 100).toFixed(1) }}%（最高 +{{ Math.round(RENT_STALL_MAX * 100) }}%）；每有一人出局，全场租金再额外上浮，拖得越久决战压力越大。
+            <b>终局</b>（剩 2 人）：所有租金与过路费 <b>×1.5</b>，市场波动加剧（每轮 ±8%）。<br />
+            <b>经济危机</b>：终局后连续 {{ ENDGAME.crisisTurns }} 轮无人破产，双方现金与资源 -30%，建筑各有 30% 概率降级——逼出胜负。<br />
+            <b>反僵持</b>：从第 {{ RENT_STALL_START }} 轮起，所有租金每轮 +{{ (RENT_STALL_PER_ROUND * 100).toFixed(1) }}%（最高 +{{ Math.round(RENT_STALL_MAX * 100) }}%），拖得越久决战压力越大。
           </p>
 
           <h4>❖ 特色一览</h4>

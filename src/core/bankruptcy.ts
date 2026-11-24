@@ -50,8 +50,6 @@ export async function declareBankruptcy(game: GameApi, playerId: number, credito
   p.stats.timesBankrupt++
   s.bankruptOrder.push(playerId)
   if (s.firstBankruptTurn === null) s.firstBankruptTurn = s.turn
-  // 任何破产都重置"无人破产"倒计时：危机只惩罚真正的僵局
-  s.roundsNoBankruptcy = 0
 
   let cashToCreditor = 0
   // 建筑半价折现
@@ -100,21 +98,17 @@ export async function declareBankruptcy(game: GameApi, playerId: number, credito
     s.endReason = 'last-standing'
     game.log(`「${alive[0].name}」淘汰了所有对手，成为最后的生还者！`, alive[0].id)
   }
-  if (alive.length <= ENDGAME.pressureAlive && alive.length >= 2 && !s.endgame && s.winner === null) {
+  if (alive.length === 2 && !s.endgame && s.winner === null) {
     s.endgame = true
     s.roundsNoBankruptcy = 0
     // 银行收回所有无主地块
     for (const t of s.tiles) {
       if (t.owner === null && (t.type === 'terrain' || t.type === 'bridge')) t.seized = true
     }
-    // 租金倍率统一由 globalRentMod 按存活人数施加：≤2 人 ×1.5，3 人 ×1.0（压力期不叠租金）。
+    // 终局租金 +50% 由 globalRentMod 依据 endgame 标记统一施加。
     // 旧实现又往 rentMods 里塞了一条 ×1.5，实际变成 ×2.25；且 Infinity 存档后会变成 null，
     // 读档后终局加成神秘消失——同一局读档前后强度不一致。
-    const rentMod = alive.length <= 2 ? ENDGAME.rentMod : ENDGAME.pressureRentMod
-    const endgameText = rentMod > 1
-      ? `仅剩 ${alive.length} 名玩家！无主地块被银行收回，所有过路费 ×${rentMod}，资源价格波动加剧！`
-      : `仅剩 ${alive.length} 名玩家，进入终局压力期！无主地块被银行收回，连续 ${ENDGAME.crisisTurns} 轮无人破产将触发经济危机。`
-    await game.notice('终局对决', endgameText, '⚔️')
+    await game.notice('终局对决', '仅剩 2 名玩家！无主地块被银行收回，所有过路费 +50%，资源价格波动加剧！', '⚔️')
   }
 
   // 人类淘汰：单独事件交给 UI 弹出结算/观战选择（不阻塞游戏主循环）
@@ -129,12 +123,12 @@ export async function declareBankruptcy(game: GameApi, playerId: number, credito
   game.markChanged()
 }
 
-/** 终局经济危机（连续 6 轮无人破产，存活玩家资产缩水 30%） */
+/** 终局经济危机（连续 5 轮无人破产，双方资产缩水 30%） */
 export async function checkCrisis(game: GameApi): Promise<void> {
   const s = game.state
   if (s.winner !== null) return
   const alive = s.players.filter(p => p.alive)
-  if (!s.endgame || alive.length < 2 || alive.length > ENDGAME.pressureAlive) return
+  if (!s.endgame || alive.length !== 2) return
   s.roundsNoBankruptcy++
   if (s.roundsNoBankruptcy >= ENDGAME.crisisTurns) {
     s.roundsNoBankruptcy = 0

@@ -782,19 +782,9 @@ export class Game implements GameApi {
         }
       }
 
-      // 一轮结束：按总轮数轮换先手（旧实现永远让 turnOrder[0] 先手，
-      // 4 人局首手胜率显著高于期望）。轮换只在"每轮第一个行动者"上做，
-      // 轮内仍严格按开局决定的行动顺序，不破坏顺序公平。
-      const seats = s.turnOrder.length
-      if (seats > 0) {
-        const startSeat = s.totalRound % seats
-        let first = s.turnOrder[startSeat]
-        for (let k = 0; k < seats; k++) {
-          const cand = s.turnOrder[(startSeat + k) % seats]
-          if (s.players[cand]?.alive) { first = cand; break }
-        }
-        s.currentPlayer = first
-      }
+      // 一轮结束：行动顺序回到本局开局顺序。若按「上轮末位玩家」作为下一轮起点
+      // （读档恢复用的轮转逻辑），会造成上轮最后行动的玩家连续行动两次——末尾连续两轮都是自己
+      s.currentPlayer = s.turnOrder[0] ?? 0
 
       // 轮末：更新垄断状态（不判胜——垄断是压制手段，胜负仍靠淘汰）
       if (s.winner === null && !this.stopped) updateMonopolyStatus(this)

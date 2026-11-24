@@ -10,10 +10,6 @@ export const LOG_CAP = 200
 export const MAX_TURNS = 4000
 /** 前 N 轮保护期：不触发自然灾害（1 轮 = 全部存活玩家各行动一次） */
 export const SAFE_TURNS = 10
-/** 每淘汰一名玩家，全场租金额外上涨的比例（加速终局，减少"已有人出局后的垃圾时间"） */
-export const RENT_PER_ELIMINATION = 0.03
-/** 淘汰租金加成上限（相对 1 的额外倍率封顶） */
-export const RENT_ELIMINATION_MAX = 0.15
 /** 每回合操作配额（每位玩家独立计次：进入各自行动阶段时重置）。
  *  人类与 AI 同数：建造 ≤1、升级 ≤1、修理 ≤1、勘探 ≤1、修桥 ≤1。
  *  扣减位置统一：人类 UI 与 AI（act.ts）都走 game.buildAt/upgradeAt/repairAt/exploreAt/repairBridge，配额随当前玩家各自独立，互不共享。
@@ -385,9 +381,7 @@ export const BRIDGE_MONOPOLY_MIN_LEVELS = 2
 // ---------- 终局（文档 2.3） ----------
 export const ENDGAME = {
   rentMod: 1.5,
-  pressureRentMod: 1.0, // 3 人压力期先只靠经济危机倒计时，不额外叠租金；只剩 2 人才上 1.5
-  pressureAlive: 3,      // 存活 ≤3 人即开始"经济危机"压力（旧版只在 2 人时启动，导致后段拖沓）
-  crisisTurns: 6,
+  crisisTurns: 5,
   crisisRatio: 0.3,
 }
 

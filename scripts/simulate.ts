@@ -184,7 +184,7 @@ async function main() {
       .map(([seat, wins]) => `${seat} 号 ${wins} 局 ${(wins / Math.max(1, bc.games) * 100).toFixed(1)}%`)
       .join(' · ')
     console.log(`  ${n} 人局胜者分布：${seatText}`)
-    console.log(`  ${n} 人局开局掷点最高者胜率：${(bc.firstRollWins / Math.max(1, bc.games) * 100).toFixed(1)}%（期望 ${(100 / n).toFixed(1)}%，样本 ${bc.games} 局；先手每轮轮换，此指标仅参考）`)
+    console.log(`  ${n} 人局开局掷点最高者胜率：${(bc.firstRollWins / Math.max(1, bc.games) * 100).toFixed(1)}%（期望 ${(100 / n).toFixed(1)}%，样本 ${bc.games} 局；开局掷点最高者固定先手，此指标仅参考）`)
   }
   console.log(`胜者分布（全员混跑原始计数）：${[...winners.entries()].map(([k, v]) => `${k} 号 ${v} 局`).join('，')}`)
   console.log(`破产人数分布：${[...bankruptDist.entries()].map(([k, v]) => `${k} 人破产 ${v} 局`).join('，')}`)

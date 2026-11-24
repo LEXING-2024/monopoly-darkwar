@@ -6,7 +6,7 @@
 import { execSync } from 'node:child_process'
 
 const GAMES = process.argv[2] ?? '500'
-// 2026-11 经济与终局节奏重平衡后最近实测中位：easy 266 / normal 264 / hard 269 / hell 280。
+// 2026-11 恢复原版节奏后最近实测中位：easy 276 / normal 291 / hard 309 / hell 308。
 // 地板按实测中位留出安全余量，只拦截恶性回退（对局被压得过短），不把长度当硬指标。
 const FLOORS: Record<string, number> = {
   easy: 250,
