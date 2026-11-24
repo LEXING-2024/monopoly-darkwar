@@ -1,13 +1,13 @@
 // ============ 事件系统：反垄断 / 事件链 / 季节事件（文档 6.3、9.3、10） ============
 
 import {
-  ANTITRUST, BRIDGE_MONOPOLY_MIN_LEVELS, BRIDGES, EAST_BRIDGE, monopolyTerrainRatio, SEASON_EVENTS, TERRAIN_RESOURCE, WEST_BRIDGE,
+  ANTITRUST, BRIDGE_MONOPOLY_MIN_LEVELS, BRIDGES, EAST_BRIDGE, monopolyTerrainRatio, SEASON_EVENTS, WEST_BRIDGE,
 } from './config'
 import { repairCost } from './buildings'
 import { keyBreakupTile, totalValue as playerTotalValue } from './economy'
 import { applyPriceShock } from './market'
 import { remember } from './ai/memory'
-import type { ChainState, GameApi, ResourceType } from './types'
+import type { ChainState, GameApi } from './types'
 
 // ---------- 反垄断举报（文档 9.3：玩家主动举报制） ----------
 

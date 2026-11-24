@@ -33,7 +33,7 @@ export function aiRespond(game: GameApi, prompt: Prompt): any {
     case 'choose-resource':
       return chooseResource(game, prompt.player, prompt.options, prompt.cardId)
     case 'choose-terrain':
-      return chooseTerrain(game, prompt.player, prompt.options, prompt.cardId)
+      return chooseTerrain(game, prompt.player, prompt.options)
     case 'choose-tile':
       return chooseTile(game, prompt.player, prompt.tiles, prompt.cardId)
     case 'start-stop':
@@ -66,7 +66,7 @@ export function aiRespond(game: GameApi, prompt: Prompt): any {
     case 'donate':
       return respondDonate(game, prompt.player, prompt.target)
     case 'sell-spec':
-      return respondSellSpec(game, prompt.player, prompt.resource, prompt.price)
+      return respondSellSpec(game, prompt.player, prompt.resource)
     case 'join-report':
       return respondJoinReport(game, prompt.player, prompt.target, prompt.cost, prompt.currentProb)
   }
@@ -88,7 +88,7 @@ function respondBuy(game: GameApi, playerId: number, price: number): { buy: bool
   const threshold = 1.15 + strategyAdj + emotionAdj - (brain?.profile.greed ?? 0.5) * 0.15
   // 买后仍须保留安全线的大部分，避免现金枯竭提前破产
   const afford = p.cash - price >= safety * 0.7
-  const chosen = rollAction(game, brain!, [
+  const chosen = rollAction(brain!, [
     { value: true, score: afford ? v - threshold : -Infinity },
     { value: false, score: 0 },
   ])
@@ -255,13 +255,13 @@ function chooseResource(game: GameApi, playerId: number, options: ResourceType[]
       value: r,
       score: opponentExposure(game, playerId, r),
     }))
-    return rollAction(game, brain!, scored) ?? options[0]
+    return rollAction(brain!, scored) ?? options[0]
   }
   const scored = options.map(r => ({
     value: r,
     score: s.market[r] * Math.max(0.9, Math.min(1.3, priceForecast(game, r, lookahead))) * (p.resources[r] > 0 ? 1.2 : 1),
   }))
-  return rollAction(game, brain!, scored) ?? options[0]
+  return rollAction(brain!, scored) ?? options[0]
 }
 
 /** 对手在某资源上的暴露度：对手持有的该地形地块数 × 基础产出 × 市价（不含自己） */
@@ -276,7 +276,7 @@ function opponentExposure(game: GameApi, playerId: number, res: ResourceType): n
 }
 
 /** 地形选择（灾害卡：选对手暴露最多的地形区） */
-function chooseTerrain(game: GameApi, playerId: number, options: Terrain[], cardId: string): Terrain {
+function chooseTerrain(game: GameApi, playerId: number, options: Terrain[]): Terrain {
   const brain = getBrain(game.state, playerId)
   const scored = options.map(terrain => {
     const res = TERRAIN_RESOURCE[terrain]
@@ -286,7 +286,7 @@ function chooseTerrain(game: GameApi, playerId: number, options: Terrain[], card
       score: opponentExposure(game, playerId, res),
     }
   })
-  return rollAction(game, brain!, scored) ?? options[0]
+  return rollAction(brain!, scored) ?? options[0]
 }
 
 // ---------- 地块选择（按卡牌上下文） ----------
@@ -319,7 +319,7 @@ function chooseTile(game: GameApi, playerId: number, tiles: number[], cardId: st
     }
     return { value: i, score }
   })
-  return rollAction(game, brain!, scored) ?? tiles[0]
+  return rollAction(brain!, scored) ?? tiles[0]
 }
 
 // ---------- 起点停留 ----------
@@ -333,7 +333,7 @@ function chooseStartStop(game: GameApi, playerId: number, repairCost: number, da
   // 前方风险：1~12 步内敌对地块的期望租金（休息 -1 步可以躲开高租金段）
   const aheadRisk = landingRiskAhead(game, playerId)
   const restScore = aheadRisk - 400 - (p.status.moveMod !== 0 ? 0 : 0)
-  const chosen = rollAction(game, brain!, [
+  const chosen = rollAction(brain!, [
     { value: 'skip' as const, score: 0 },
     { value: 'rest' as const, score: restScore },
   ])
@@ -408,14 +408,14 @@ function respondDonate(game: GameApi, playerId: number, target: number): number 
 
 // ---------- 投机资源结算 ----------
 
-function respondSellSpec(game: GameApi, playerId: number, res: ResourceType, price: number): { sell: boolean } {
+function respondSellSpec(game: GameApi, playerId: number, res: ResourceType): { sell: boolean } {
   const s = game.state
   const brain = getBrain(s, playerId)
   const lookahead = Math.max(0, brain?.profile.lookahead ?? 1)
   const outlook = resourceOutlook(game, res, lookahead)
   // 前景看跌或囤积倾向低 → 卖；看涨且囤积倾向高 → 继续持有
   const sellScore = (outlook <= 0 ? 200 : -200) + (1 - (brain?.profile.hoarding ?? 0.5)) * 300
-  const chosen = rollAction(game, brain!, [
+  const chosen = rollAction(brain!, [
     { value: true, score: sellScore },
     { value: false, score: 0 },
   ])
@@ -440,7 +440,7 @@ function respondJoinReport(game: GameApi, playerId: number, targetId: number, co
   // 难度行为：联合举报意愿高则更愿意分摊成本，低则除非有私怨基本不参与
   const appetite = brain?.profile.jointReportAppetite ?? 0.5
   const score = ev + grudgePush + (coop * 150 - 75) + aggression * 100 + (appetite - 0.5) * 300
-  const chosen = rollAction(game, brain!, [
+  const chosen = rollAction(brain!, [
     { value: true, score },
     { value: false, score: 0 },
   ])

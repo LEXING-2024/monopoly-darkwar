@@ -99,7 +99,6 @@ export function tileRent(game: GameApi, tile: Tile, owner: Player | null): numbe
   if (owner) {
     // 商业建筑每格限 1 座；这里取 max 而不是 sum，兼容旧存档里可能存在的两座商业，
     // 避免历史存档继续享受 5.2 倍叠加租金。
-    let rentMult = 1
     let commercialMult = 0
     for (const b of tile.buildings) {
       if (b.damaged) continue   // 受损建筑停摆：不加成租金，修理后才恢复

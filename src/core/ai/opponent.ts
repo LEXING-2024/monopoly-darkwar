@@ -1,7 +1,7 @@
 // ============ 对手建模与威胁评估：现金 / 地块分布 / 意图推断 / 威胁值 ============
 
 import { bridgeToll, tileRent, totalValue } from '../economy'
-import type { AiBrain, GameApi, Terrain } from '../types'
+import type { GameApi, Terrain } from '../types'
 import { grudge, incomeEstimate, monopolyRushInfo } from './brain'
 import { reportCount } from './memory'
 
@@ -10,7 +10,6 @@ export function updateOpponentModels(game: GameApi, playerId: number): void {
   const s = game.state
   const brain = s.aiBrains?.[playerId]
   if (!brain) return
-  const me = s.players[playerId]
 
   for (const other of s.players) {
     if (other.id === playerId) continue

@@ -1,7 +1,7 @@
 // ============ 破产与终局（文档 2.3） ============
 
 import { ENDGAME, monopolyTerrainRatio, RESOURCES } from './config'
-import type { GameApi, Player, ResourceType, Terrain } from './types'
+import type { GameApi, ResourceType, Terrain } from './types'
 
 /**
  * 强制变卖：资源半价出售、建筑半价折现，直到凑够目标金额。

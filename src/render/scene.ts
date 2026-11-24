@@ -77,7 +77,6 @@ interface TileView {
 
 export class BoardScene extends Phaser.Scene {
   core!: Game
-  private board!: Phaser.GameObjects.Container
   private parchment!: Phaser.GameObjects.Image
   /** 基准缩放 = 画布宽 / 棋盘宽（棋盘铺满视野），容器尺寸变化时重算 */
   private baseZoom = 0
@@ -565,7 +564,6 @@ export class BoardScene extends Phaser.Scene {
     const img = terrain ?? parchment
     if (img && img.complete && img.naturalWidth > 0) {
       const ir = img.naturalWidth / img.naturalHeight
-      const cr = W / H
       let dw = W
       let dh = W / ir
       if (dh < H) { dh = H; dw = H * ir }
@@ -1436,7 +1434,7 @@ export class BoardScene extends Phaser.Scene {
       M.setScroll(M.scrollX + (sx - cx) * dInv, M.scrollY + (sy - cy) * dInv)
       M.setZoom(next)
     };
-    this.input.on("wheel", (a: any, v: any, o: any, r: any) => {
+    this.input.on("wheel", (a: any, _v: any, _o: any, r: any) => {
       // 滚轮固定来自鼠标：用事件自带的 pointer(a) 坐标做锚点。
       // 不用 this.input.activePointer——activePointers=2 时它可能指向触摸指针，坐标不在鼠标处。
       // r = deltaY：向下滚(r>0)缩小、向上滚放大。

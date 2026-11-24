@@ -4,7 +4,7 @@ import {
   BRIDGES, BUILDING_DEFS, FLOOD_TILES, MAX_TURNS, RESERVE_MULT, RESERVE_WEIGHTS, RESOURCES,
   SEASONS, SEASON_ORDER, TILE_COUNT, TERRAIN_RESOURCE, EAST_BRIDGE, WEST_BRIDGE,
 } from '../config'
-import { bridgeToll, contiguousRun, exploreCost, globalRentMod, tileOutput, tileRent } from '../economy'
+import { bridgeToll, contiguousRun, exploreCost, tileOutput, tileRent } from '../economy'
 import type { GameApi, ResourceType, Season, Terrain, Tile } from '../types'
 import { getBrain } from './brain'
 

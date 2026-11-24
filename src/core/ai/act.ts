@@ -6,7 +6,7 @@ import {
   AI_EVAL, BRIDGES, BRIDGE_PRICING, BUILDINGS, BUILDING_DEFS, EAST_BRIDGE, FLOOD_TILES, MARKET_MANIPULATION,
   monopolyTerrainRatio, RESOURCES, RESOURCE_ORDER, SEASONS, TERRAIN_RESOURCE, WEST_BRIDGE,
 } from '../config'
-import { canBuild, levelCost, repair, repairCost } from '../buildings'
+import { canBuild, levelCost, repairCost } from '../buildings'
 import { bridgeRepairCost, exploreCost, tileRent } from '../economy'
 import { isMonopoly, lobby, monopolyInfo, monopolyTargets, reportMonopoly } from '../events'
 import { getBrain, decayBrain, incomeEstimate, terrainDependence } from './brain'
@@ -76,7 +76,7 @@ export async function aiAct(game: GameApi, playerId: number): Promise<void> {
     const unk = myTiles.filter(t => t.type === 'terrain' && !t.explored)
     if (unk.length) {
       const best = unk
-        .map(t => ({ t, score: exploreGain(game, playerId, t) }))
+        .map(t => ({ t, score: exploreGain(game, t) }))
         .sort((a, b) => b.score - a.score)[0]
       if (best.score > 0 && p.cash - exploreCost(best.t) >= 500) {
         await game.sleep()
@@ -373,7 +373,7 @@ function planSales(game: GameApi, playerId: number): void {
 
 // ---------- 勘探 / 升级评分 ----------
 
-function exploreGain(game: GameApi, playerId: number, t: Tile): number {
+function exploreGain(game: GameApi, t: Tile): number {
   const s = game.state
   const res = TERRAIN_RESOURCE[t.terrain as Terrain]
   if (!res) return -Infinity

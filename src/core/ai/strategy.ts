@@ -1,8 +1,7 @@
 // ============ AI 状态机：游戏阶段 × 资产排名 → 扩张 / 防守 / 攻击 / 垄断冲刺 ============
 
-import { ENDGAME } from '../config'
 import type { AiBrain, GameApi, Player, Terrain } from '../types'
-import { incomeEstimate, monopolyRushInfo } from './brain'
+import { monopolyRushInfo } from './brain'
 import { totalValue } from '../economy'
 
 /** 游戏阶段：早期（发育）/ 中期 / 后期（终局或幸存者少） */

@@ -345,7 +345,6 @@ export const QUAKE = {
 
 // ---------- 反垄断（文档 9.3，玩家主动举报制） ----------
 export const ANTITRUST = {
-  terrainRatio: 0.7,        // 垄断线基线上限（实际按人数缩放，见 monopolyTerrainRatio）
   globalRatio: 0.5,         // 垄断线：全局地形占比 ≥50%
   reportCost: 300,          // 每位举报人费用
   reportProb: [0, 0.4, 0.7, 0.9],   // 按举报人数：1 人 40%、2 人 70%、3 人及以上 90%
@@ -431,11 +430,7 @@ export const CONTIGUOUS_BONUS = {
 /** 垄断线（非胜利条件）：某玩家对某类地形的占比达到此值即"形成垄断"。
  *  垄断不直接获胜，而是解锁压制全桌的手段（限产/价格战/断供），
  *  同时招致反垄断举报——胜负仍靠淘汰对手。
- *  注意：实际门槛按人数缩放，业务代码统一调用 monopolyTerrainRatio(玩家数)，
- *  此常量仅作 8 人局基线 / 旧存档兼容。 */
-export const MONOPOLY_WIN = {
-  terrainRatio: 0.7,
-} as const
+ *  实际门槛按人数缩放，业务代码统一调用 monopolyTerrainRatio(玩家数)。 */
 
 // ---------- 卡牌（文档 5.2/5.3，季节加权） ----------
 export const SEASON_CARD_WEIGHT = 2   // 对应季节标签权重 ×2

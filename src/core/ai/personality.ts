@@ -1,7 +1,7 @@
 // ============ AI 性格生成 + 决策噪声（难度分级体现于此） ============
 
 import { AI_DIFFICULTY } from '../config'
-import type { AiDifficulty, AiProfile, AiBrain, GameApi } from '../types'
+import type { AiDifficulty, AiProfile, AiBrain } from '../types'
 import { RNG } from '../rng'
 
 /** 按难度 + 随机生成性格：难度决定噪声/犯错/预判/现金安全线，性格值在难度内随机保证个性差异 */
@@ -36,7 +36,7 @@ export function saveBrainRng(brain: AiBrain, rng: RNG): void {
 
 /** 从候选动作中按分数选择：加噪声扰动 + 难度犯错概率（随机选一个动作替代最优） */
 export function rollAction<T>(
-  game: GameApi, brain: AiBrain,
+  brain: AiBrain,
   scored: { value: T; score: number }[],
 ): T | null {
   if (!scored.length) return null

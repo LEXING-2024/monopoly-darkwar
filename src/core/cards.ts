@@ -6,7 +6,6 @@ import {
 import { makeTyphoonState } from './disasters'
 import { addChain, monopolyInfo, specialReport } from './events'
 import { rollReserve, totalValue } from './economy'
-import { applyPriceShock } from './market'
 import { newBuildingId } from './buildings'
 import type { DisasterKind, GameApi, ResourceType, Season, Terrain, Tile } from './types'
 
@@ -281,7 +280,6 @@ export const FATE_DECK: CardDef[] = [
     id: 'tax-audit', name: '突击查税', icon: '🧾',
     desc: '二选一：缴纳人均总财富 的 2% 税款，或失去你价值最低的一块地块。',
     effect: async (game, pid) => {
-      const s = game.state
       const tax = cardMoney(game, 0.02)
       const choice = await game.prompt<'pay' | 'lose'>({
         type: 'pay-or-lose', title: '突击查税',

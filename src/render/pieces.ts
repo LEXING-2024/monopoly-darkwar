@@ -248,7 +248,6 @@ export class Piece {
     this.animating = true
     this.bobTween?.pause()   // 移动期间暂停待机浮动，避免互相拉扯
     const p = LAYOUT[tileIndex]
-    const sx = this.body.x
     const sy = this.body.y
     const tx = p.x + offsetX
     const ty = p.y + offsetY
